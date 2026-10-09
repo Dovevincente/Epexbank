@@ -1,0 +1,1135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+  SUPPORT
+  LOAN_OFFICER
+  INVESTMENT_MANAGER
+  COMPLIANCE_OFFICER
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  BLOCKED
+  CLOSED
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum AccountType {
+  CURRENT
+  SAVINGS
+  BUSINESS
+  INVESTMENT
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  SUSPENDED
+  CLOSED
+}
+
+enum WalletType {
+  FIAT
+  INVESTMENT
+  REWARD
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  PAYMENT
+  FEE
+  REFUND
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT
+  SAVINGS_DEPOSIT
+  SAVINGS_WITHDRAWAL
+  INVESTMENT_BUY
+  INVESTMENT_SELL
+  DIVIDEND
+  INTEREST
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+  CANCELLED
+}
+
+enum TransferType {
+  INTERNAL
+  BANK
+  INTERNATIONAL
+}
+
+enum TransferStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REVERSED
+}
+
+enum DepositStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum LoanType {
+  PERSONAL
+  BUSINESS
+  EMERGENCY
+  EDUCATION
+  AUTO
+  MORTGAGE
+}
+
+enum LoanStatus {
+  DRAFT
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  ACTIVE
+  REJECTED
+  COMPLETED
+  DEFAULTED
+  CANCELLED
+}
+
+enum RepaymentStatus {
+  PENDING
+  PAID
+  PARTIAL
+  OVERDUE
+  MISSED
+}
+
+enum SavingsType {
+  REGULAR
+  FIXED
+  GOAL
+}
+
+enum SavingsStatus {
+  ACTIVE
+  MATURED
+  COMPLETED
+  CANCELLED
+  WITHDRAWN
+}
+
+enum InvestmentType {
+  STOCK
+  BOND
+  ETF
+  MUTUAL_FUND
+  FIXED_INCOME
+}
+
+enum InvestmentOrderType {
+  BUY
+  SELL
+}
+
+enum InvestmentOrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CardType {
+  VIRTUAL
+  PHYSICAL
+}
+
+enum CardStatus {
+  ACTIVE
+  FROZEN
+  BLOCKED
+  EXPIRED
+  CANCELLED
+}
+
+enum CardNetwork {
+  VISA
+  MASTERCARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum NotificationType {
+  TRANSACTION
+  SECURITY
+  LOAN
+  INVESTMENT
+  PAYMENT
+  SYSTEM
+  PROMOTION
+}
+
+enum SupportStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum LedgerEntryType {
+  DEBIT
+  CREDIT
+}
+
+enum ShareOrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  REJECT
+  SUSPEND
+  BLOCK
+  UNBLOCK
+  TRANSFER
+  DEPOSIT
+  WITHDRAWAL
+  LOAN_APPROVAL
+  KYC_APPROVAL
+  CARD_ACTION
+}
+
+// ============================================================
+// USER
+// ============================================================
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  phone        String?    @unique
+  passwordHash String
+  role         UserRole   @default(CUSTOMER)
+  status       UserStatus @default(PENDING)
+
+  emailVerified    Boolean @default(false)
+  phoneVerified    Boolean @default(false)
+  twoFactorEnabled Boolean @default(false)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  profile Profile?
+  kyc     Kyc?
+
+  accounts Account[]
+  wallets  Wallet[]
+
+  beneficiaries Beneficiary[]
+
+  transactions Transaction[]
+
+  sentTransfers     Transfer[] @relation("SenderTransfers")
+  receivedTransfers Transfer[] @relation("ReceiverTransfers")
+
+  deposits    Deposit[]
+  withdrawals Withdrawal[]
+
+  loans   Loan[]
+  savings SavingsAccount[]
+
+  investmentAccount InvestmentAccount?
+  investmentOrders  InvestmentOrder[]
+
+  shareOrders ShareOrder[]
+
+  cards    Card[]
+  payments Payment[]
+
+  notifications Notification[]
+
+  supportTickets SupportTicket[]
+
+  sessions SecuritySession[]
+
+  auditLogs AuditLog[] @relation("UserAuditLogs")
+
+  createdAtAdmin AuditLog[] @relation("AdminAuditLogs")
+
+  @@index([email])
+  @@index([status])
+  @@index([role])
+}
+
+// ============================================================
+// PROFILE
+// ============================================================
+
+model Profile {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  firstName  String
+  middleName String?
+  lastName   String
+
+  dateOfBirth DateTime?
+  nationality String?
+  country     String?
+  state       String?
+  city        String?
+
+  address    String?
+  postalCode String?
+
+  profileImage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// KYC
+// ============================================================
+
+model Kyc {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status KycStatus @default(NOT_STARTED)
+
+  documentType     String?
+  documentNumber   String?
+  documentFrontUrl String?
+  documentBackUrl  String?
+  selfieUrl        String?
+
+  rejectionReason String?
+
+  reviewedAt DateTime?
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// CURRENCY
+// ============================================================
+
+model Currency {
+  id String @id @default(cuid())
+
+  code   String @unique
+  name   String
+  symbol String
+
+  decimals Int     @default(2)
+  isActive Boolean @default(true)
+
+  accounts     Account[]
+  wallets      Wallet[]
+  transactions Transaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// ACCOUNTS
+// ============================================================
+
+model Account {
+  id String @id @default(cuid())
+
+  accountNumber String        @unique
+  type          AccountType   @default(CURRENT)
+  status        AccountStatus @default(ACTIVE)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  currencyId String
+  currency   Currency @relation(fields: [currencyId], references: [id])
+
+  balance          Decimal @default(0) @db.Decimal(20, 4)
+  availableBalance Decimal @default(0) @db.Decimal(20, 4)
+  ledgerBalance    Decimal @default(0) @db.Decimal(20, 4)
+
+  minimumBalance Decimal @default(0) @db.Decimal(20, 4)
+
+  ledgerEntries LedgerEntry[]
+  transactions  Transaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([accountNumber])
+}
+
+// ============================================================
+// WALLETS
+// ============================================================
+
+model Wallet {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  currencyId String
+  currency   Currency @relation(fields: [currencyId], references: [id])
+
+  type WalletType @default(FIAT)
+
+  balance Decimal @default(0) @db.Decimal(20, 4)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, currencyId, type])
+}
+
+// ============================================================
+// LEDGER
+// ============================================================
+
+model LedgerEntry {
+  id String @id @default(cuid())
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  type LedgerEntryType
+
+  amount Decimal @db.Decimal(20, 4)
+
+  balanceBefore Decimal @db.Decimal(20, 4)
+  balanceAfter  Decimal @db.Decimal(20, 4)
+
+  description String?
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
+  @@index([transactionId])
+}
+
+// ============================================================
+// TRANSACTIONS
+// ============================================================
+
+model Transaction {
+  id String @id @default(cuid())
+
+  reference      String  @unique
+  idempotencyKey String? @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  currencyId String
+  currency   Currency @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+
+  type   TransactionType
+  status TransactionStatus
+
+  amount Decimal @db.Decimal(20, 4)
+  fee    Decimal @default(0) @db.Decimal(20, 4)
+  total  Decimal @db.Decimal(20, 4)
+
+  description String?
+  metadata    Json?
+
+  ledgerEntries LedgerEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([currencyId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// BENEFICIARIES
+// ============================================================
+
+model Beneficiary {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name          String
+  accountName   String?
+  accountNumber String?
+  bankName      String?
+  bankCode      String?
+  country       String?
+  currencyCode  String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  transfers Transfer[]
+
+  @@index([userId])
+}
+
+// ============================================================
+// TRANSFERS
+// ============================================================
+
+model Transfer {
+  id String @id @default(cuid())
+
+  reference      String  @unique
+  idempotencyKey String? @unique
+
+  senderId String
+  sender   User   @relation("SenderTransfers", fields: [senderId], references: [id], onDelete: Restrict)
+
+  receiverId String?
+  receiver   User?   @relation("ReceiverTransfers", fields: [receiverId], references: [id], onDelete: SetNull)
+
+  beneficiaryId String?
+  beneficiary   Beneficiary? @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+
+  type   TransferType
+  status TransferStatus
+
+  amount Decimal @db.Decimal(20, 4)
+  fee    Decimal @default(0) @db.Decimal(20, 4)
+  total  Decimal @db.Decimal(20, 4)
+
+  currencyCode String
+  description  String?
+  metadata     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// DEPOSITS
+// ============================================================
+
+model Deposit {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount Decimal @db.Decimal(20, 4)
+  fee    Decimal @default(0) @db.Decimal(20, 4)
+
+  currencyCode String
+
+  method String
+  status DepositStatus @default(PENDING)
+
+  externalReference String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([reference])
+  @@index([status])
+}
+
+// ============================================================
+// WITHDRAWALS
+// ============================================================
+
+model Withdrawal {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount Decimal @db.Decimal(20, 4)
+  fee    Decimal @default(0) @db.Decimal(20, 4)
+
+  currencyCode String
+
+  method String
+  status WithdrawalStatus @default(PENDING)
+
+  destination Json?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([reference])
+  @@index([status])
+}
+
+// ============================================================
+// LOANS
+// ============================================================
+
+model Loan {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  type LoanType
+
+  status LoanStatus @default(PENDING)
+
+  requestedAmount Decimal  @db.Decimal(20, 4)
+  approvedAmount  Decimal? @db.Decimal(20, 4)
+
+  interestRate Decimal @db.Decimal(8, 4)
+
+  termMonths Int
+
+  monthlyPayment Decimal? @db.Decimal(20, 4)
+
+  totalRepayment Decimal? @db.Decimal(20, 4)
+
+  outstandingBalance Decimal? @db.Decimal(20, 4)
+
+  purpose String?
+
+  rejectionReason String?
+
+  approvedAt  DateTime?
+  disbursedAt DateTime?
+  completedAt DateTime?
+
+  repayments LoanRepayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([reference])
+}
+
+// ============================================================
+// LOAN REPAYMENTS
+// ============================================================
+
+model LoanRepayment {
+  id String @id @default(cuid())
+
+  loanId String
+  loan   Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  installment Int
+
+  amount    Decimal @db.Decimal(20, 4)
+  principal Decimal @db.Decimal(20, 4)
+  interest  Decimal @db.Decimal(20, 4)
+
+  dueDate DateTime
+  paidAt  DateTime?
+
+  status RepaymentStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([loanId, installment])
+  @@index([loanId])
+  @@index([status])
+}
+
+// ============================================================
+// SAVINGS
+// ============================================================
+
+model SavingsAccount {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  type SavingsType
+
+  status SavingsStatus @default(ACTIVE)
+
+  name String
+
+  principal    Decimal @default(0) @db.Decimal(20, 4)
+  interestRate Decimal @db.Decimal(8, 4)
+
+  targetAmount Decimal? @db.Decimal(20, 4)
+
+  maturityDate DateTime?
+
+  balance Decimal @default(0) @db.Decimal(20, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================
+// INVESTMENT ACCOUNT
+// ============================================================
+
+model InvestmentAccount {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  cashBalance Decimal @default(0) @db.Decimal(20, 4)
+
+  totalValue Decimal @default(0) @db.Decimal(20, 4)
+
+  profitLoss Decimal @default(0) @db.Decimal(20, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  holdings InvestmentHolding[]
+}
+
+// ============================================================
+// INVESTMENT PRODUCTS
+// ============================================================
+
+model InvestmentProduct {
+  id String @id @default(cuid())
+
+  symbol String @unique
+  name   String
+
+  type InvestmentType
+
+  description String?
+
+  price Decimal @db.Decimal(20, 8)
+
+  currencyCode String
+
+  isActive Boolean @default(true)
+
+  holdings InvestmentHolding[]
+  orders   InvestmentOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([isActive])
+}
+
+// ============================================================
+// INVESTMENT HOLDINGS
+// ============================================================
+
+model InvestmentHolding {
+  id String @id @default(cuid())
+
+  investmentAccountId String
+  investmentAccount   InvestmentAccount @relation(fields: [investmentAccountId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   InvestmentProduct @relation(fields: [productId], references: [id])
+
+  quantity Decimal @db.Decimal(20, 8)
+
+  averagePrice Decimal @db.Decimal(20, 8)
+
+  currentValue Decimal @db.Decimal(20, 4)
+
+  profitLoss Decimal @default(0) @db.Decimal(20, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([investmentAccountId, productId])
+}
+
+// ============================================================
+// INVESTMENT ORDERS
+// ============================================================
+
+model InvestmentOrder {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  productId String
+  product   InvestmentProduct @relation(fields: [productId], references: [id])
+
+  type InvestmentOrderType
+
+  status InvestmentOrderStatus @default(PENDING)
+
+  quantity Decimal @db.Decimal(20, 8)
+
+  price Decimal @db.Decimal(20, 8)
+
+  total Decimal @db.Decimal(20, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([productId])
+  @@index([status])
+}
+
+// ============================================================
+// SHARES
+// ============================================================
+
+model Share {
+  id String @id @default(cuid())
+
+  symbol      String @unique
+  companyName String
+
+  description String?
+
+  currentPrice Decimal @db.Decimal(20, 8)
+
+  currencyCode String
+
+  totalShares Decimal @db.Decimal(20, 4)
+
+  availableShares Decimal @db.Decimal(20, 4)
+
+  isActive Boolean @default(true)
+
+  orders ShareOrder[]
+
+  dividends Dividend[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+// ============================================================
+// SHARE ORDERS
+// ============================================================
+
+model ShareOrder {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  shareId String
+  share   Share  @relation(fields: [shareId], references: [id])
+
+  type InvestmentOrderType
+
+  status ShareOrderStatus @default(PENDING)
+
+  quantity Decimal @db.Decimal(20, 8)
+
+  price Decimal @db.Decimal(20, 8)
+
+  total Decimal @db.Decimal(20, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([shareId])
+  @@index([status])
+}
+
+// ============================================================
+// DIVIDENDS
+// ============================================================
+
+model Dividend {
+  id String @id @default(cuid())
+
+  shareId String
+  share   Share  @relation(fields: [shareId], references: [id], onDelete: Cascade)
+
+  amountPerShare Decimal @db.Decimal(20, 8)
+
+  recordDate  DateTime
+  paymentDate DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([shareId])
+}
+
+// ============================================================
+// CARDS
+// ============================================================
+
+model Card {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    CardType
+  network CardNetwork
+
+  lastFour String
+
+  cardholderName String
+
+  expiryMonth Int
+  expiryYear  Int
+
+  status CardStatus @default(ACTIVE)
+
+  dailyLimit   Decimal @default(0) @db.Decimal(20, 4)
+  monthlyLimit Decimal @default(0) @db.Decimal(20, 4)
+
+  isContactless Boolean @default(true)
+  isOnline      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
+model Payment {
+  id String @id @default(cuid())
+
+  reference String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount Decimal @db.Decimal(20, 4)
+  fee    Decimal @default(0) @db.Decimal(20, 4)
+
+  currencyCode String
+
+  merchantName String?
+  merchantId   String?
+
+  description String?
+
+  status PaymentStatus @default(PENDING)
+
+  externalReference String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([reference])
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type NotificationType
+
+  title   String
+  message String
+
+  isRead Boolean @default(false)
+
+  data Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ============================================================
+// SUPPORT
+// ============================================================
+
+model SupportTicket {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject     String
+  description String
+
+  status SupportStatus @default(OPEN)
+
+  priority String @default("NORMAL")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================
+// SECURITY SESSIONS
+// ============================================================
+
+model SecuritySession {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String @unique
+
+  ipAddress String?
+  userAgent String?
+
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+// ============================================================
+// AUDIT LOGS
+// ============================================================
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?   @relation("UserAuditLogs", fields: [userId], references: [id])
+
+  adminId String?
+  admin   User?   @relation("AdminAuditLogs", fields: [adminId], references: [id])
+
+  action AuditAction
+
+  entity   String?
+  entityId String?
+
+  description String?
+
+  metadata Json?
+
+  ipAddress String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}

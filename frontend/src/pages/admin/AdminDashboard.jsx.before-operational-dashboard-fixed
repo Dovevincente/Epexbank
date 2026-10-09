@@ -1,0 +1,1170 @@
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  ArrowDownToLine,
+  ArrowRight,
+  ArrowUpRight,
+  Banknote,
+  BarChart3,
+  Building2,
+  CalendarClock,
+  CreditCard,
+  DollarSign,
+  FileCheck2,
+  Landmark,
+  Loader2,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  Ticket,
+  TrendingUp,
+  UserCog,
+  Users,
+  Wallet,
+  WalletCards,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import api from "../../services/api.js";
+
+/*
+|--------------------------------------------------------------------------
+| STATISTICS NORMALIZATION
+|--------------------------------------------------------------------------
+*/
+
+const normalizeStatistics = (payload) => {
+  const source =
+    payload?.statistics ||
+    payload?.stats ||
+    payload?.data?.statistics ||
+    payload?.data?.stats ||
+    payload?.data ||
+    payload ||
+    {};
+
+  const customers = source?.customers || {};
+  const accounts = source?.accounts || {};
+  const kyc = source?.kyc || {};
+  const transactions = source?.transactions || {};
+  const transfers = source?.transfers || {};
+  const deposits = source?.deposits || {};
+  const withdrawals = source?.withdrawals || {};
+  const loans = source?.loans || {};
+  const cards = source?.cards || {};
+  const payments = source?.payments || {};
+  const investments = source?.investments || {};
+  const shares = source?.shares || {};
+  const support = source?.support || {};
+  const savings = source?.savings || {};
+
+  return {
+    customers: Number(customers?.total ?? 0),
+    activeCustomers: Number(customers?.active ?? 0),
+    suspendedCustomers: Number(customers?.suspended ?? 0),
+    blockedCustomers: Number(customers?.blocked ?? 0),
+
+    accounts: Number(accounts?.total ?? 0),
+    activeAccounts: Number(accounts?.active ?? 0),
+    frozenAccounts: Number(accounts?.frozen ?? 0),
+    suspendedAccounts: Number(accounts?.suspended ?? 0),
+    restrictedAccounts: Number(accounts?.restricted ?? 0),
+
+    kyc: {
+      pending: Number(kyc?.pending ?? 0),
+      underReview: Number(kyc?.underReview ?? 0),
+      verified: Number(kyc?.verified ?? 0),
+      rejected: Number(kyc?.rejected ?? 0),
+    },
+
+    transactions: {
+      total: Number(transactions?.total ?? 0),
+      pending: Number(transactions?.pending ?? 0),
+      processing: Number(transactions?.processing ?? 0),
+      completed: Number(transactions?.completed ?? 0),
+      failed: Number(transactions?.failed ?? 0),
+      reversed: Number(transactions?.reversed ?? 0),
+      today: Number(transactions?.today ?? 0),
+    },
+
+    transfers: {
+      total: Number(transfers?.total ?? 0),
+      pending: Number(transfers?.pending ?? 0),
+      processing: Number(transfers?.processing ?? 0),
+      completed: Number(transfers?.completed ?? 0),
+      failed: Number(transfers?.failed ?? 0),
+      today: Number(transfers?.today ?? 0),
+    },
+
+    deposits: {
+      total: Number(deposits?.total ?? 0),
+      pending: Number(deposits?.pending ?? 0),
+      processing: Number(deposits?.processing ?? 0),
+      completed: Number(deposits?.completed ?? 0),
+      failed: Number(deposits?.failed ?? 0),
+      today: Number(deposits?.today ?? 0),
+    },
+
+    withdrawals: {
+      total: Number(withdrawals?.total ?? 0),
+      pending: Number(withdrawals?.pending ?? 0),
+      processing: Number(withdrawals?.processing ?? 0),
+      completed: Number(withdrawals?.completed ?? 0),
+      failed: Number(withdrawals?.failed ?? 0),
+      today: Number(withdrawals?.today ?? 0),
+    },
+
+    loans: {
+      total: Number(loans?.total ?? 0),
+      pending: Number(loans?.pending ?? 0),
+      underReview: Number(loans?.underReview ?? 0),
+      approved: Number(loans?.approved ?? 0),
+      active: Number(loans?.active ?? 0),
+      defaulted: Number(loans?.defaulted ?? 0),
+      completed: Number(loans?.completed ?? 0),
+    },
+
+    cards: {
+      total: Number(cards?.total ?? 0),
+      active: Number(cards?.active ?? 0),
+      blocked: Number(cards?.blocked ?? 0),
+      frozen: Number(cards?.frozen ?? 0),
+    },
+
+    payments: {
+      total: Number(payments?.total ?? 0),
+      pending: Number(payments?.pending ?? 0),
+      completed: Number(payments?.completed ?? 0),
+      failed: Number(payments?.failed ?? 0),
+    },
+
+    investments: {
+      totalOrders: Number(investments?.totalOrders ?? 0),
+      pending: Number(investments?.pending ?? 0),
+      processing: Number(investments?.processing ?? 0),
+      completed: Number(investments?.completed ?? 0),
+    },
+
+    shares: {
+      totalOrders: Number(shares?.totalOrders ?? 0),
+      pending: Number(shares?.pending ?? 0),
+      processing: Number(shares?.processing ?? 0),
+      completed: Number(shares?.completed ?? 0),
+    },
+
+    support: {
+      open: Number(support?.open ?? 0),
+      inProgress: Number(support?.inProgress ?? 0),
+      resolved: Number(support?.resolved ?? 0),
+    },
+
+    savings: {
+      totalAccounts: Number(savings?.totalAccounts ?? 0),
+    },
+
+    totalBalance: Number(source?.totalBalance ?? 0),
+    pendingItems: Number(source?.pendingItems ?? 0),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| FORMATTERS
+|--------------------------------------------------------------------------
+*/
+
+const formatNumber = (value) => {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return "0";
+  }
+
+  return new Intl.NumberFormat().format(numericValue);
+};
+
+const formatMoney = (value, currency = "USD") => {
+  const amount = Number(value);
+
+  if (!Number.isFinite(amount)) {
+    return "—";
+  }
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(2)}`;
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| STAT CARD
+|--------------------------------------------------------------------------
+*/
+
+const StatCard = ({
+  label,
+  value,
+  description,
+  icon: Icon,
+  iconClassName = "bg-slate-100 text-slate-700",
+  onClick,
+}) => {
+  const content = (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-slate-500">
+            {label}
+          </p>
+
+          <p className="mt-2 truncate text-2xl font-bold tracking-tight text-slate-950">
+            {value}
+          </p>
+        </div>
+
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${iconClassName}`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+
+      {description ? (
+        <p className="mt-3 text-xs leading-5 text-slate-500">
+          {description}
+        </p>
+      ) : null}
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {content}
+    </div>
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN ACTION CARD
+|--------------------------------------------------------------------------
+*/
+
+const AdminAction = ({
+  title,
+  description,
+  icon: Icon,
+  onClick,
+}) => {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex w-full items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 transition group-hover:bg-slate-950 group-hover:text-white">
+        <Icon className="h-5 w-5" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold text-slate-950">
+          {title}
+        </p>
+
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          {description}
+        </p>
+      </div>
+
+      <ArrowRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-700" />
+    </button>
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| ADMIN SECTION
+|--------------------------------------------------------------------------
+*/
+
+const AdminSection = ({
+  title,
+  description,
+  children,
+}) => {
+  return (
+    <section>
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-slate-950">
+          {title}
+        </h2>
+
+        {description ? (
+          <p className="mt-1 text-sm text-slate-500">
+            {description}
+          </p>
+        ) : null}
+      </div>
+
+      {children}
+    </section>
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| DASHBOARD
+|--------------------------------------------------------------------------
+*/
+
+const AdminPage = () => {
+  const navigate = useNavigate();
+
+  const [statistics, setStatistics] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOAD LIVE STATISTICS
+  |--------------------------------------------------------------------------
+  */
+
+  const loadStatistics = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    setError("");
+
+    try {
+      const response = await api.get("/admin/statistics");
+
+      setStatistics(
+        normalizeStatistics(response?.data),
+      );
+    } catch (requestError) {
+      const message =
+        requestError?.response?.data?.message ||
+        requestError?.response?.data?.error ||
+        requestError?.message ||
+        "Unable to load administrative statistics.";
+
+      setError(message);
+      setStatistics(null);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStatistics();
+  }, [loadStatistics]);
+
+  /*
+  |--------------------------------------------------------------------------
+  | DERIVED METRICS
+  |--------------------------------------------------------------------------
+  */
+
+  const operationalRate = useMemo(() => {
+    if (!statistics || statistics.accounts <= 0) {
+      return null;
+    }
+
+    return Math.round(
+      (statistics.activeAccounts /
+        statistics.accounts) *
+        100,
+    );
+  }, [statistics]);
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOADING
+  |--------------------------------------------------------------------------
+  */
+
+  if (loading) {
+    return (
+      <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex min-h-[460px] items-center justify-center rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-col items-center text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-slate-700" />
+
+              <p className="mt-4 font-semibold text-slate-950">
+                Loading administration dashboard
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Retrieving live operational statistics.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | ERROR
+  |--------------------------------------------------------------------------
+  */
+
+  if (error && !statistics) {
+    return (
+      <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-3xl">
+          <div className="rounded-3xl border border-red-200 bg-white p-6 shadow-sm sm:p-8">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+
+            <h1 className="mt-5 text-2xl font-bold tracking-tight text-slate-950">
+              Administration data unavailable
+            </h1>
+
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {error}
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => loadStatistics()}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Try again
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  navigate("/admin/customers")
+                }
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Open customers
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const data =
+    statistics || normalizeStatistics({});
+
+  return (
+    <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+
+        {/* =====================================================
+            HEADER
+        ====================================================== */}
+
+        <section className="overflow-hidden rounded-3xl bg-slate-950 text-white shadow-sm">
+          <div className="relative p-5 sm:p-7 lg:p-8">
+            <div className="absolute right-0 top-0 h-64 w-64 translate-x-1/3 -translate-y-1/3 rounded-full bg-white/5 blur-3xl" />
+
+            <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-3xl">
+
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Epex Bank • Administrative Control Centre
+                </div>
+
+                <h1 className="text-2xl font-bold tracking-tight sm:text-3xl lg:text-4xl">
+                  Bank Administration
+                </h1>
+
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+                  Central operational control for customers,
+                  accounts, transactions, transfers, lending,
+                  investments, cards, compliance and support.
+                </p>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                    Live system
+                  </span>
+
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300">
+                    Server-side authorization
+                  </span>
+
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300">
+                    Audit controlled
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  loadStatistics(true)
+                }
+                disabled={refreshing}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${
+                    refreshing
+                      ? "animate-spin"
+                      : ""
+                  }`}
+                />
+
+                Refresh data
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================================
+            WARNING
+        ====================================================== */}
+
+        {error ? (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+
+            <div>
+              <p className="font-semibold">
+                Dashboard refresh warning
+              </p>
+
+              <p className="mt-1">
+                {error}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {/* =====================================================
+            BANK OVERVIEW
+        ====================================================== */}
+
+        <AdminSection
+          title="Bank-wide overview"
+          description="Live figures returned by the Epex Bank administration API."
+        >
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+            <StatCard
+              label="Customers"
+              value={formatNumber(data.customers)}
+              description="Registered customer records."
+              icon={Users}
+              iconClassName="bg-blue-50 text-blue-700"
+              onClick={() =>
+                navigate("/admin/customers")
+              }
+            />
+
+            <StatCard
+              label="Bank accounts"
+              value={formatNumber(data.accounts)}
+              description="Customer banking accounts."
+              icon={WalletCards}
+              iconClassName="bg-violet-50 text-violet-700"
+              onClick={() =>
+                navigate("/admin/accounts")
+              }
+            />
+
+            <StatCard
+              label="Active accounts"
+              value={formatNumber(
+                data.activeAccounts,
+              )}
+              description={
+                operationalRate === null
+                  ? "Active account status."
+                  : `${operationalRate}% of returned accounts are active.`
+              }
+              icon={CreditCard}
+              iconClassName="bg-emerald-50 text-emerald-700"
+              onClick={() =>
+                navigate("/admin/accounts")
+              }
+            />
+
+            <StatCard
+              label="Restricted accounts"
+              value={formatNumber(
+                data.restrictedAccounts,
+              )}
+              description="Blocked, suspended or restricted accounts."
+              icon={ShieldCheck}
+              iconClassName="bg-amber-50 text-amber-700"
+              onClick={() =>
+                navigate("/admin/accounts")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            FINANCIAL ACTIVITY
+        ====================================================== */}
+
+        <section className="grid gap-4 lg:grid-cols-4">
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                <DollarSign className="h-5 w-5" />
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Returned balances
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-slate-950">
+                  {formatMoney(
+                    data.totalBalance,
+                    "USD",
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs leading-5 text-slate-500">
+              Displayed using the aggregate returned by
+              the statistics endpoint.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                <ArrowUpRight className="h-5 w-5" />
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Transactions
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-slate-950">
+                  {formatNumber(
+                    data.transactions,
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                navigate("/admin/transactions")
+              }
+              className="mt-4 text-xs font-semibold text-slate-700 hover:text-slate-950"
+            >
+              Open transaction control →
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700">
+                <ArrowDownToLine className="h-5 w-5" />
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Transfers
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-slate-950">
+                  {formatNumber(
+                    data.transfers,
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                navigate("/admin/transfers")
+              }
+              className="mt-4 text-xs font-semibold text-slate-700 hover:text-slate-950"
+            >
+              Open transfer control →
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+                <CalendarClock className="h-5 w-5" />
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  Pending items
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-slate-950">
+                  {formatNumber(
+                    data.pendingItems,
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs leading-5 text-slate-500">
+              Pending activity reported by the administration statistics endpoint.
+            </p>
+          </div>
+        </section>
+
+        {/* =====================================================
+            CUSTOMER & ACCOUNT CONTROL
+        ====================================================== */}
+
+        <AdminSection
+          title="Customer & account control"
+          description="Manage customer records, accounts and administrative account operations."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="Customer management"
+              description="Search customers, review profiles and manage customer status."
+              icon={Users}
+              onClick={() =>
+                navigate("/admin/customers")
+              }
+            />
+
+            <AdminAction
+              title="Account management"
+              description="Review accounts, balances, ownership and account status."
+              icon={WalletCards}
+              onClick={() =>
+                navigate("/admin/accounts")
+              }
+            />
+
+            <AdminAction
+              title="Banking operations"
+              description="Perform authorized account-level operational actions."
+              icon={Building2}
+              onClick={() =>
+                navigate("/admin/operations")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            TRANSACTION & MONEY MOVEMENT
+        ====================================================== */}
+
+        <AdminSection
+          title="Transaction & money movement"
+          description="Central operational access for transaction and transfer processing."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+
+            <AdminAction
+              title="Transactions"
+              description="Review transaction activity, statuses and operational records."
+              icon={ArrowUpRight}
+              onClick={() =>
+                navigate("/admin/transactions")
+              }
+            />
+
+            <AdminAction
+              title="Transfers"
+              description="Review and manage customer transfer operations."
+              icon={ArrowDownToLine}
+              onClick={() =>
+                navigate("/admin/transfers")
+              }
+            />
+
+            <AdminAction
+              title="Deposits"
+              description="Review customer deposit activity and deposit operations."
+              icon={Banknote}
+              onClick={() =>
+                navigate("/admin/deposits")
+              }
+            />
+
+            <AdminAction
+              title="Withdrawals"
+              description="Review withdrawal requests and processing activity."
+              icon={Wallet}
+              onClick={() =>
+                navigate("/admin/withdrawals")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            LENDING
+        ====================================================== */}
+
+        <AdminSection
+          title="Lending & credit"
+          description="Administrative control over the bank's lending workflow."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="Loan management"
+              description="Review applications, approvals, disbursements and loan accounts."
+              icon={Landmark}
+              onClick={() =>
+                navigate("/admin/loans")
+              }
+            />
+
+            <AdminAction
+              title="Loan applications"
+              description="Review and process customer loan applications."
+              icon={FileCheck2}
+              onClick={() =>
+                navigate("/admin/loans")
+              }
+            />
+
+            <AdminAction
+              title="Loan operations"
+              description="Access loan details and ongoing loan administration."
+              icon={TrendingUp}
+              onClick={() =>
+                navigate("/admin/loans")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            INVESTMENT & WEALTH
+        ====================================================== */}
+
+        <AdminSection
+          title="Investments & wealth"
+          description="Manage the investment and share products already available in EpexBank."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="Investments"
+              description="Review investment accounts, products and customer investment activity."
+              icon={TrendingUp}
+              onClick={() =>
+                navigate("/admin/investments")
+              }
+            />
+
+            <AdminAction
+              title="Shares"
+              description="Manage share orders, holdings and related administration."
+              icon={BarChart3}
+              onClick={() =>
+                navigate("/admin/shares")
+              }
+            />
+
+            <AdminAction
+              title="Investment operations"
+              description="Access the investment management workspace."
+              icon={DollarSign}
+              onClick={() =>
+                navigate("/admin/investments")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            CARDS & PAYMENTS
+        ====================================================== */}
+
+        <AdminSection
+          title="Cards & payments"
+          description="Administrative access to card and payment operations."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="Card management"
+              description="Review customer cards and card operational status."
+              icon={CreditCard}
+              onClick={() =>
+                navigate("/admin/cards")
+              }
+            />
+
+            <AdminAction
+              title="Payment operations"
+              description="Review payment activity and payment-related records."
+              icon={DollarSign}
+              onClick={() =>
+                navigate("/admin/transactions")
+              }
+            />
+
+            <AdminAction
+              title="Financial activity"
+              description="Review transaction records associated with financial operations."
+              icon={Banknote}
+              onClick={() =>
+                navigate("/admin/transactions")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            COMPLIANCE & RISK
+        ====================================================== */}
+
+        <AdminSection
+          title="Compliance & risk"
+          description="Protected operational areas for customer verification and administrative oversight."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="KYC review"
+              description="Review customer verification and KYC cases."
+              icon={FileCheck2}
+              onClick={() =>
+                navigate("/admin/kyc")
+              }
+            />
+
+            <AdminAction
+              title="Audit logs"
+              description="Review recorded administrative activity and operational actions."
+              icon={ShieldCheck}
+              onClick={() =>
+                navigate("/admin/audit-logs")
+              }
+            />
+
+            <AdminAction
+              title="Security administration"
+              description="Review protected administrative controls and security-related records."
+              icon={ShieldCheck}
+              onClick={() =>
+                navigate("/admin/audit-logs")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            CUSTOMER SERVICE
+        ====================================================== */}
+
+        <AdminSection
+          title="Customer service"
+          description="Manage customer support activity and service operations."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="Support tickets"
+              description="Review and manage customer support cases."
+              icon={Ticket}
+              onClick={() =>
+                navigate("/admin/support")
+              }
+            />
+
+            <AdminAction
+              title="Customer profiles"
+              description="Open customer records and review account-related information."
+              icon={UserCog}
+              onClick={() =>
+                navigate("/admin/customers")
+              }
+            />
+
+            <AdminAction
+              title="Customer operations"
+              description="Continue to the broader customer administration workspace."
+              icon={Users}
+              onClick={() =>
+                navigate("/admin/customers")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            SYSTEM ADMINISTRATION
+        ====================================================== */}
+
+        <AdminSection
+          title="System administration"
+          description="Bank-wide administrative configuration and oversight."
+        >
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+            <AdminAction
+              title="System settings"
+              description="Manage administrative system configuration."
+              icon={Settings}
+              onClick={() =>
+                navigate("/admin/settings")
+              }
+            />
+
+            <AdminAction
+              title="Administrative activity"
+              description="Review the audit trail for sensitive administrative actions."
+              icon={ShieldCheck}
+              onClick={() =>
+                navigate("/admin/audit-logs")
+              }
+            />
+
+            <AdminAction
+              title="Administration operations"
+              description="Open the central banking operations workspace."
+              icon={Building2}
+              onClick={() =>
+                navigate("/admin/operations")
+              }
+            />
+          </div>
+        </AdminSection>
+
+        {/* =====================================================
+            CONTROL SUMMARY
+        ====================================================== */}
+
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-5 sm:px-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+
+              <div>
+                <h2 className="font-bold text-slate-950">
+                  Administrative control
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Sensitive operations remain protected by backend authorization.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-px bg-slate-200 sm:grid-cols-2 lg:grid-cols-4">
+
+            <div className="bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Customers
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                Full customer administration
+              </p>
+            </div>
+
+            <div className="bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Financial
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                Transactions & money movement
+              </p>
+            </div>
+
+            <div className="bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Products
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                Loans, investments & cards
+              </p>
+            </div>
+
+            <div className="bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Oversight
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                KYC, audit & support
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* =====================================================
+            SECURITY NOTICE
+        ====================================================== */}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-start gap-3">
+
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+
+            <div>
+              <h2 className="font-bold text-slate-950">
+                Administrative security
+              </h2>
+
+              <p className="mt-1 text-sm leading-6 text-slate-500">
+                Administrative actions should remain protected by
+                server-side authentication, authorization, validation
+                and audit logging. Frontend navigation is only a
+                control surface and does not replace backend security.
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+};
+
+export default AdminPage;

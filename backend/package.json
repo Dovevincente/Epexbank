@@ -1,0 +1,44 @@
+{
+  "name": "epex-bank-backend",
+  "version": "1.0.0",
+  "description": "Epex Bank digital banking backend",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:format": "prisma format",
+    "prisma:validate": "prisma validate"
+  },
+  "keywords": [
+    "epex",
+    "banking",
+    "fintech",
+    "digital-banking"
+  ],
+  "author": "Epex Bank",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
+    "multer": "^2.4.0",
+    "resend": "^6.32.0",
+    "socket.io": "^4.8.3",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "prisma": "6.19.3"
+  }
+}
