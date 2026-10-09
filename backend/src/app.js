@@ -118,9 +118,24 @@ app.use(
  * ============================================================
  */
 
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "https://epexbank.vercel.app",
+  ...(env.frontendUrl || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+]);
+
 app.use(
   cors({
-    origin: env.frontendUrl,
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Origin not allowed by CORS"));
+    },
     credentials: true,
   }),
 );
@@ -519,4 +534,5 @@ app.use(
  */
 
 export default app;
+
 
