@@ -9,12 +9,17 @@ export const AUTH = {
   PASSWORD_MIN_LENGTH: 10,
 };
 
+
 export const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
+  sameSite:
+    process.env.NODE_ENV === "production"
+      ? "none"
+      : "lax",
   path: "/",
 };
+
 
 export const ACCOUNT = {
   DEFAULT_CURRENCY: "USD",
