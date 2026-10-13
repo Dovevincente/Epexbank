@@ -357,6 +357,9 @@ export const createInternalTransfer = async ({
       amount,
     });
 
+
+    
+
   const result =
     await prisma.$transaction(
       async (tx) => {
@@ -386,6 +389,9 @@ export const createInternalTransfer = async ({
           }
         }
 
+
+
+        
         /* ------------------------------------------------------------------ */
         /* Sender account                                                      */
         /* ------------------------------------------------------------------ */
@@ -1970,6 +1976,438 @@ export const cancelInternalTransfer = async ({
   };
 };
 
+
+
+/* -------------------------------------------------------------------------- */
+/* Create international transfer                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Creates an international transfer request and reserves funds while it awaits
+ * approval.
+ *
+ * IMPORTANT:
+ * - This does not send money through an external payment provider.
+ * - FX conversion is not configured.
+ * - Submitted TIN/AML/CFT codes are recorded but are not independently verified.
+ */
+export const createInternationalTransfer = async ({
+  userId,
+  accountId,
+  beneficiaryId,
+  amount,
+  currency,
+  currencyCode,
+  purpose,
+  reference,
+  transferDate,
+  notes,
+  tinCode,
+  amlCode,
+  cftCode,
+  idempotencyKey,
+}) => {
+  if (!userId) {
+    throw createServiceError(
+      "Authenticated user is required",
+      401
+    );
+  }
+
+  if (!accountId) {
+    throw createServiceError(
+      "Please select a sending account",
+      400
+    );
+  }
+
+  if (!beneficiaryId) {
+    throw createServiceError(
+      "Please select a saved beneficiary",
+      400
+    );
+  }
+
+  let transferAmount;
+
+  try {
+    transferAmount = toDecimal(amount);
+  } catch {
+    throw createServiceError(
+      "Enter a valid transfer amount",
+      400
+    );
+  }
+
+  if (
+    !transferAmount ||
+    (
+      typeof transferAmount.isFinite === "function" &&
+      !transferAmount.isFinite()
+    ) ||
+    transferAmount.lessThanOrEqualTo(0)
+  ) {
+    throw createServiceError(
+      "Enter a valid transfer amount greater than zero",
+      400
+    );
+  }
+
+  const normalizedKey =
+    normalizeIdempotencyKey(idempotencyKey);
+
+  const result = await prisma.$transaction(
+    async (tx) => {
+      /* ------------------------------------------------------------------ */
+      /* Idempotency                                                         */
+      /* ------------------------------------------------------------------ */
+
+      if (normalizedKey) {
+        const existing = await tx.transfer.findUnique({
+          where: {
+            idempotencyKey: normalizedKey,
+          },
+          include: {
+            ...transferInclude,
+            beneficiary: true,
+          },
+        });
+
+        if (existing) {
+          if (existing.senderId !== userId) {
+            throw createServiceError(
+              "This idempotency key belongs to another user",
+              409
+            );
+          }
+
+          if (existing.type !== "INTERNATIONAL") {
+            throw createServiceError(
+              "This idempotency key was used for another transfer type",
+              409
+            );
+          }
+
+          return {
+            transfer: existing,
+            alreadyProcessed: true,
+          };
+        }
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Validate beneficiary                                                */
+      /* ------------------------------------------------------------------ */
+
+      const beneficiary = await tx.beneficiary.findFirst({
+        where: {
+          id: beneficiaryId,
+          userId,
+          isActive: true,
+        },
+      });
+
+      if (!beneficiary) {
+        throw createServiceError(
+          "The selected beneficiary was not found or is inactive",
+          404
+        );
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Validate sender account                                             */
+      /* ------------------------------------------------------------------ */
+
+      const ownedAccount = await tx.account.findFirst({
+        where: {
+          id: accountId,
+          userId,
+        },
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          availableBalance: true,
+          currency: {
+            select: {
+              code: true,
+            },
+          },
+        },
+      });
+
+      if (!ownedAccount) {
+        throw createServiceError(
+          "The selected sending account was not found",
+          404
+        );
+      }
+
+      /* Lock the account to reduce concurrent balance-update conflicts. */
+      await tx.$queryRaw`
+        SELECT id
+        FROM "Account"
+        WHERE id = ${ownedAccount.id}
+        FOR UPDATE
+      `;
+
+      const account = await tx.account.findUnique({
+        where: {
+          id: ownedAccount.id,
+        },
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          availableBalance: true,
+          currency: {
+            select: {
+              code: true,
+            },
+          },
+        },
+      });
+
+      if (!account || account.userId !== userId) {
+        throw createServiceError(
+          "The sending account is no longer available",
+          409
+        );
+      }
+
+      if (account.status !== "ACTIVE") {
+        throw createServiceError(
+          "Your sending account is not active",
+          403
+        );
+      }
+
+      const accountCurrency = account.currency?.code
+        ?.trim()
+        ?.toUpperCase();
+
+      if (!accountCurrency) {
+        throw createServiceError(
+          "The sending account has no configured currency",
+          400
+        );
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Currency validation                                                 */
+      /* ------------------------------------------------------------------ */
+
+      const requestedCurrency = String(
+        currencyCode || currency || accountCurrency
+      )
+        .trim()
+        .toUpperCase();
+
+      if (requestedCurrency !== accountCurrency) {
+        throw createServiceError(
+          `Your sending account uses ${accountCurrency}. Foreign-exchange conversion is not configured.`,
+          400
+        );
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Compliance checks                                                   */
+      /* ------------------------------------------------------------------ */
+
+      const complianceResult =
+        await runTransferComplianceChecks({
+          tx,
+          userId,
+        });
+
+      if (
+        complianceResult.complianceStatus === "BLOCKED"
+      ) {
+        throw createServiceError(
+          complianceResult.complianceReason ||
+            "Transfer blocked by compliance checks",
+          403
+        );
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Check available balance                                             */
+      /* ------------------------------------------------------------------ */
+
+      const availableBalance =
+        toDecimal(account.availableBalance);
+
+      if (availableBalance.lessThan(transferAmount)) {
+        throw createServiceError(
+          "Insufficient available balance",
+          400
+        );
+      }
+
+      /* Reserve funds while the transfer awaits approval. */
+      await tx.account.update({
+        where: {
+          id: account.id,
+        },
+        data: {
+          availableBalance:
+            availableBalance.minus(transferAmount),
+        },
+      });
+
+      /* ------------------------------------------------------------------ */
+      /* Clean submitted information                                         */
+      /* ------------------------------------------------------------------ */
+
+      const cleanPurpose = String(
+        purpose || "International transfer"
+      )
+        .trim()
+        .slice(0, 500);
+
+      const cleanReference = String(reference || "")
+        .trim()
+        .slice(0, 150);
+
+      const cleanNotes = String(notes || "")
+        .trim()
+        .slice(0, 2000);
+
+      /* ------------------------------------------------------------------ */
+      /* Create transfer                                                      */
+      /* ------------------------------------------------------------------ */
+
+      const transfer = await tx.transfer.create({
+        data: {
+          reference: generateReference("INT"),
+          idempotencyKey: normalizedKey,
+          senderId: userId,
+          beneficiaryId: beneficiary.id,
+
+          type: "INTERNATIONAL",
+          status: "PENDING",
+
+          complianceStatus:
+            complianceResult.complianceStatus,
+
+          tinCheckStatus:
+            complianceResult.tinCheckStatus,
+
+          amlCheckStatus:
+            complianceResult.amlCheckStatus,
+
+          cftCheckStatus:
+            complianceResult.cftCheckStatus,
+
+          complianceReason:
+            complianceResult.complianceReason,
+
+          complianceReviewedAt:
+            complianceResult.complianceStatus === "CLEARED"
+              ? new Date()
+              : null,
+
+          amount: transferAmount,
+          fee: new Prisma.Decimal(0),
+          total: transferAmount,
+          currencyCode: accountCurrency,
+
+          description:
+            cleanPurpose || "International transfer",
+
+          metadata: {
+            transferCategory: "INTERNATIONAL",
+
+            beneficiaryId: beneficiary.id,
+            beneficiaryName: beneficiary.name,
+            beneficiaryAccountName:
+              beneficiary.accountName ?? null,
+            beneficiaryAccountNumber:
+              beneficiary.accountNumber ?? null,
+            beneficiaryBankName:
+              beneficiary.bankName ?? null,
+            beneficiaryBankCode:
+              beneficiary.bankCode ?? null,
+            beneficiaryCountry:
+              beneficiary.country ?? null,
+            beneficiaryCurrency:
+              beneficiary.currencyCode ?? null,
+
+            senderAccountId: account.id,
+            senderCurrency: accountCurrency,
+            requestedCurrency,
+
+            purpose: cleanPurpose,
+            reference: cleanReference,
+            transferDate: transferDate
+              ? String(transferDate)
+              : null,
+            notes: cleanNotes,
+
+            complianceCodesSubmitted: {
+              tinProvided: Boolean(
+                String(tinCode || "").trim()
+              ),
+              amlProvided: Boolean(
+                String(amlCode || "").trim()
+              ),
+              cftProvided: Boolean(
+                String(cftCode || "").trim()
+              ),
+            },
+
+            reservationStatus: "RESERVED",
+            approvalRequired: true,
+            externalPaymentProvider: "NOT_CONFIGURED",
+          },
+        },
+
+        include: {
+          ...transferInclude,
+          beneficiary: true,
+        },
+      });
+
+      /* ------------------------------------------------------------------ */
+      /* Audit log                                                            */
+      /* ------------------------------------------------------------------ */
+
+      await createAuditLog({
+        tx,
+        userId,
+        action: "TRANSFER",
+        entityId: transfer.id,
+
+        metadata: {
+          reference: transfer.reference,
+          amount: serializeMoney(transferAmount),
+          currencyCode: accountCurrency,
+          beneficiaryId: beneficiary.id,
+          status: "PENDING",
+          fundsReserved: true,
+          externalPaymentProvider: "NOT_CONFIGURED",
+        },
+      });
+
+      return {
+        transfer,
+        alreadyProcessed: false,
+      };
+    },
+
+    {
+      isolationLevel:
+        Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5000,
+      timeout: 15000,
+    }
+  );
+
+  return {
+    transfer: serializeTransfer(result.transfer),
+    alreadyProcessed: result.alreadyProcessed,
+  };
+};
 /* -------------------------------------------------------------------------- */
 /* User transfer history                                                      */
 /* -------------------------------------------------------------------------- */

@@ -1009,9 +1009,10 @@ const BankTransfer = () => {
 
     setComplianceChecking(false);
 
-    setComplianceStep(
-      "complete",
-    );
+    // Mark the final check complete before opening review.
+    // Confirm transfer is enabled only after this state is set.
+    setComplianceStep("complete");
+    setStep("review");
   };
 
   const advanceComplianceStep =
@@ -1113,9 +1114,7 @@ const BankTransfer = () => {
     setSubmitError("");
 
     if (step === "review") {
-      setComplianceStep(
-        "complete",
-      );
+      setComplianceStep("cft");
       setStep("compliance");
       return;
     }
@@ -1137,13 +1136,6 @@ const BankTransfer = () => {
         return;
       }
 
-      if (
-        complianceStep ===
-        "complete"
-      ) {
-        setComplianceStep("cft");
-        return;
-      }
 
       setStep("form");
     }
@@ -1602,7 +1594,7 @@ const BankTransfer = () => {
                 </h2>
 
                 <p className="mt-1 text-sm leading-6 text-emerald-800/80">
-                  Your transfer has passed the required compliance checks and has been submitted for processing.
+                  Your transfer has been submitted for processing.
                 </p>
               </div>
             </div>
@@ -1733,16 +1725,12 @@ const BankTransfer = () => {
       tin: "TIN / Tax Code",
       aml: "AML Code",
       cft: "CFT Code",
-      complete:
-        "Compliance verification complete",
     };
 
     const complianceDescriptions = {
-      tin: "Enter the TIN / Tax Code registered and verified on your Epex Bank account.",
-      aml: "Your TIN step is complete. Enter your AML Code to continue.",
-      cft: "Your AML step is complete. Enter your CFT Code to continue.",
-      complete:
-        "All three compliance steps have been completed. Review your transfer before submitting it.",
+      tin: "Enter your TIN / Tax Code.",
+      aml: "Enter your AML Code.",
+      cft: "Enter your CFT Code.",
     };
 
     const currentTitle =
@@ -1754,143 +1742,6 @@ const BankTransfer = () => {
       complianceDescriptions[
         complianceStep
       ];
-
-    /*
-     * ========================================================
-     * COMPLETE SCREEN
-     * ========================================================
-     */
-
-    if (
-      complianceStep ===
-      "complete"
-    ) {
-      return (
-        <div className="mx-auto w-full max-w-3xl space-y-6">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleBack}
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
-              aria-label="Back to CFT verification"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
-                Compliance verification
-              </p>
-
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                Compliance verified
-              </h1>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-emerald-200 bg-white p-6 shadow-sm sm:p-8">
-            <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-                <CheckCircle2 className="h-6 w-6" />
-              </div>
-
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  TIN, AML and CFT completed
-                </h2>
-
-                <p className="mt-1 text-sm leading-6 text-slate-500">
-                  {currentDescription}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-3">
-              <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-                  <span className="text-sm font-semibold text-slate-700">
-                    TIN / Tax Code
-                  </span>
-                </div>
-
-                <span className="font-mono text-sm font-bold text-slate-900">
-                  {maskComplianceCode(
-                    tinCode,
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-                  <span className="text-sm font-semibold text-slate-700">
-                    AML Code
-                  </span>
-                </div>
-
-                <span className="font-mono text-sm font-bold text-slate-900">
-                  {maskComplianceCode(
-                    amlCode,
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-                  <span className="text-sm font-semibold text-slate-700">
-                    CFT Code
-                  </span>
-                </div>
-
-                <span className="font-mono text-sm font-bold text-slate-900">
-                  {maskComplianceCode(
-                    cftCode,
-                  )}
-                </span>
-              </div>
-            </div>
-
-            {submitError && (
-              <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-700" />
-
-                  <p className="text-sm font-medium leading-6 text-red-800">
-                    {submitError}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Back
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setStep("review")
-                }
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-800"
-              >
-                Review transfer
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
 
     /*
      * ========================================================
@@ -1934,14 +1785,7 @@ const BankTransfer = () => {
         ? "AML Code"
         : "CFT Code";
 
-    const buttonLabel =
-      complianceChecking
-        ? "Checking..."
-        : isTin
-          ? "Verify TIN"
-          : isAml
-            ? "Verify AML"
-            : "Verify CFT";
+    const buttonLabel = complianceChecking ? "Please wait..." : "Continue";
 
     return (
       <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -1959,71 +1803,9 @@ const BankTransfer = () => {
           </button>
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
-              Step{" "}
-              {isTin
-                ? "1"
-                : isAml
-                  ? "2"
-                  : "3"}{" "}
-              of 3
-            </p>
-
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Compliance verification
+              {inputLabel}
             </h1>
-          </div>
-        </div>
-
-        {/* PROGRESS */}
-
-        <div className="grid grid-cols-3 gap-2">
-          <div
-            className={`rounded-xl px-3 py-2 text-center text-xs font-bold ${
-              isTin
-                ? "bg-blue-700 text-white"
-                : "bg-emerald-50 text-emerald-700"
-            }`}
-          >
-            {isTin ? (
-              "1. TIN"
-            ) : (
-              <>
-                <Check className="mr-1 inline h-3.5 w-3.5" />
-                TIN
-              </>
-            )}
-          </div>
-
-          <div
-            className={`rounded-xl px-3 py-2 text-center text-xs font-bold ${
-              isAml
-                ? "bg-blue-700 text-white"
-                : isCft
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "bg-slate-100 text-slate-400"
-            }`}
-          >
-            {isAml ? (
-              "2. AML"
-            ) : isCft ? (
-              <>
-                <Check className="mr-1 inline h-3.5 w-3.5" />
-                AML
-              </>
-            ) : (
-              "2. AML"
-            )}
-          </div>
-
-          <div
-            className={`rounded-xl px-3 py-2 text-center text-xs font-bold ${
-              isCft
-                ? "bg-blue-700 text-white"
-                : "bg-slate-100 text-slate-400"
-            }`}
-          >
-            3. CFT
           </div>
         </div>
 
@@ -2047,44 +1829,6 @@ const BankTransfer = () => {
               </p>
             </div>
           </div>
-
-          {/* PREVIOUSLY COMPLETED STEPS */}
-
-          {!isTin && (
-            <div className="mt-6 flex items-center justify-between rounded-2xl bg-emerald-50 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-                <span className="text-sm font-semibold text-emerald-900">
-                  TIN verified
-                </span>
-              </div>
-
-              <span className="font-mono text-xs font-bold text-emerald-700">
-                {maskComplianceCode(
-                  tinCode,
-                )}
-              </span>
-            </div>
-          )}
-
-          {isCft && (
-            <div className="mt-3 flex items-center justify-between rounded-2xl bg-emerald-50 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-                <span className="text-sm font-semibold text-emerald-900">
-                  AML verified
-                </span>
-              </div>
-
-              <span className="font-mono text-xs font-bold text-emerald-700">
-                {maskComplianceCode(
-                  amlCode,
-                )}
-              </span>
-            </div>
-          )}
 
           <form
             onSubmit={
@@ -2122,7 +1866,7 @@ const BankTransfer = () => {
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
 
               <span>
-                Your code is checked against the compliance information associated with your verified Epex Bank account.
+                Enter the code associated with your Epex Bank account.
               </span>
             </div>
 
@@ -2161,7 +1905,7 @@ const BankTransfer = () => {
                 {complianceChecking ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Checking...
+                    Please wait...
                   </>
                 ) : (
                   <>
@@ -2207,21 +1951,6 @@ const BankTransfer = () => {
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-          <div className="rounded-2xl bg-emerald-50 p-4">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
-
-              <div>
-                <p className="text-sm font-bold text-emerald-900">
-                  Compliance verification complete
-                </p>
-
-                <p className="mt-1 text-xs leading-5 text-emerald-800/80">
-                  TIN, AML and CFT steps have been completed.
-                </p>
-              </div>
-            </div>
-          </div>
 
           <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
             <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-4 py-4">
@@ -2310,49 +2039,6 @@ const BankTransfer = () => {
             </div>
           )}
 
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-emerald-50 p-4">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-              <p className="mt-2 text-xs font-semibold text-emerald-900">
-                TIN verified
-              </p>
-
-              <p className="mt-1 font-mono text-xs text-emerald-700">
-                {maskComplianceCode(
-                  tinCode,
-                )}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-emerald-50 p-4">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-              <p className="mt-2 text-xs font-semibold text-emerald-900">
-                AML verified
-              </p>
-
-              <p className="mt-1 font-mono text-xs text-emerald-700">
-                {maskComplianceCode(
-                  amlCode,
-                )}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-emerald-50 p-4">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-
-              <p className="mt-2 text-xs font-semibold text-emerald-900">
-                CFT verified
-              </p>
-
-              <p className="mt-1 font-mono text-xs text-emerald-700">
-                {maskComplianceCode(
-                  cftCode,
-                )}
-              </p>
-            </div>
-          </div>
 
           {submitError && (
             <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4">
@@ -2424,25 +2110,6 @@ const BankTransfer = () => {
           Send money securely using your Epex Bank account. You can use a saved recipient or enter recipient details without saving them.
         </p>
       </div>
-
-      {/* SECURITY NOTICE */}
-
-      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-        <div className="flex items-start gap-3">
-          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" />
-
-          <div>
-            <p className="text-sm font-bold text-blue-900">
-              Secure bank transfer
-            </p>
-
-            <p className="mt-1 text-xs leading-5 text-blue-900/70">
-              Your transfer will require sequential TIN, AML and CFT compliance verification before it can be submitted. After each code is verified, the next verification screen loads automatically.
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* SOURCE ACCOUNT */}
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -2962,57 +2629,6 @@ const BankTransfer = () => {
           </p>
         </div>
       </section>
-
-      {/* COMPLIANCE PREVIEW */}
-
-      <section className="rounded-3xl border border-blue-100 bg-blue-50 p-5 sm:p-6">
-        <div className="flex items-start gap-3">
-          <ShieldCheck className="mt-0.5 h-6 w-6 shrink-0 text-blue-700" />
-
-          <div>
-            <h2 className="text-base font-bold text-blue-950">
-              Compliance verification
-            </h2>
-
-            <p className="mt-1 text-sm leading-6 text-blue-900/70">
-              Before the transfer can be submitted, you will verify your compliance codes one at a time.
-            </p>
-
-            <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              <div className="rounded-xl bg-white/80 px-3 py-3">
-                <p className="text-xs font-bold text-blue-900">
-                  1. TIN
-                </p>
-
-                <p className="mt-1 text-[11px] text-blue-900/60">
-                  Tax identification
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-white/80 px-3 py-3">
-                <p className="text-xs font-bold text-blue-900">
-                  2. AML
-                </p>
-
-                <p className="mt-1 text-[11px] text-blue-900/60">
-                  Anti-money laundering
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-white/80 px-3 py-3">
-                <p className="text-xs font-bold text-blue-900">
-                  3. CFT
-                </p>
-
-                <p className="mt-1 text-[11px] text-blue-900/60">
-                  Counter-terrorist financing
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ERROR */}
 
       {submitError && (
@@ -3046,7 +2662,7 @@ const BankTransfer = () => {
           disabled={!canContinue}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Continue to compliance
+          Continue
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>

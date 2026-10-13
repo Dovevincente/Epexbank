@@ -8,13 +8,9 @@ import {
   toDecimal,
 } from "../utils/money.js";
 
-import {
-  generateReference,
-} from "../utils/reference.js";
+import { generateReference } from "../utils/reference.js";
 
-import {
-  normalizeIdempotencyKey,
-} from "../utils/transfer.js";
+import { normalizeIdempotencyKey } from "../utils/transfer.js";
 
 /*
  * ============================================================
@@ -38,24 +34,18 @@ const createError = (
   message,
   statusCode = 400,
 ) => {
-  const error =
-    new Error(message);
-
-  error.statusCode =
-    statusCode;
-
+  const error = new Error(message);
+  error.statusCode = statusCode;
   return error;
 };
 
 /*
  * ============================================================
- * COMPLIANCE CODE NORMALIZER
+ * NORMALIZE COMPLIANCE CODE
  * ============================================================
  */
 
-const normalizeComplianceCode = (
-  value,
-) =>
+const normalizeComplianceCode = (value) =>
   String(value ?? "")
     .trim()
     .replace(/\s+/g, "")
@@ -63,13 +53,11 @@ const normalizeComplianceCode = (
 
 /*
  * ============================================================
- * SERIALIZER
+ * SERIALIZE TRANSFER
  * ============================================================
  */
 
-const serializeTransfer = (
-  transfer,
-) => {
+const serializeTransfer = (transfer) => {
   if (!transfer) {
     return null;
   }
@@ -77,85 +65,42 @@ const serializeTransfer = (
   return {
     ...transfer,
 
-    amount:
-      serializeMoney(
-        transfer.amount,
-      ),
-
-    fee:
-      serializeMoney(
-        transfer.fee,
-      ),
-
-    total:
-      serializeMoney(
-        transfer.total,
-      ),
+    amount: serializeMoney(transfer.amount),
+    fee: serializeMoney(transfer.fee),
+    total: serializeMoney(transfer.total),
 
     createdAt:
-      transfer.createdAt
-        ?.toISOString?.() ??
+      transfer.createdAt?.toISOString?.() ??
       transfer.createdAt,
 
     updatedAt:
-      transfer.updatedAt
-        ?.toISOString?.() ??
+      transfer.updatedAt?.toISOString?.() ??
       transfer.updatedAt,
 
     complianceReviewedAt:
-      transfer.complianceReviewedAt
-        ?.toISOString?.() ??
+      transfer.complianceReviewedAt?.toISOString?.() ??
       transfer.complianceReviewedAt,
 
-    sender:
-      transfer.sender
-        ? {
-            id:
-              transfer.sender.id,
+    sender: transfer.sender
+      ? {
+          id: transfer.sender.id,
+          email: transfer.sender.email,
+        }
+      : null,
 
-            email:
-              transfer.sender.email,
-          }
-        : null,
-
-    beneficiary:
-      transfer.beneficiary
-        ? {
-            id:
-              transfer.beneficiary.id,
-
-            name:
-              transfer.beneficiary.name,
-
-            accountName:
-              transfer.beneficiary
-                .accountName,
-
-            accountNumber:
-              transfer.beneficiary
-                .accountNumber,
-
-            bankName:
-              transfer.beneficiary
-                .bankName,
-
-            bankCode:
-              transfer.beneficiary
-                .bankCode,
-
-            country:
-              transfer.beneficiary
-                .country,
-
-            currencyCode:
-              transfer.beneficiary
-                .currencyCode,
-
-            isActive:
-              transfer.beneficiary
-                .isActive,
-          }
-        : null,
+    beneficiary: transfer.beneficiary
+      ? {
+          id: transfer.beneficiary.id,
+          name: transfer.beneficiary.name,
+          accountName: transfer.beneficiary.accountName,
+          accountNumber: transfer.beneficiary.accountNumber,
+          bankName: transfer.beneficiary.bankName,
+          bankCode: transfer.beneficiary.bankCode,
+          country: transfer.beneficiary.country,
+          currencyCode: transfer.beneficiary.currencyCode,
+          isActive: transfer.beneficiary.isActive,
+        }
+      : null,
   };
 };
 
@@ -190,987 +135,1138 @@ const transferInclude = {
 
 /*
  * ============================================================
- * VERIFY ONE TRANSFER COMPLIANCE CODE
+ * VERIFY ONE COMPLIANCE CODE
+ *
+ * FLOW:
+ *
+ * TIN
+ *  ↓
+ * AML
+ *  ↓
+ * CFT
+ *
+ * The frontend should call this endpoint one code at a time.
+ *
+ * The backend also enforces the order:
+ *
+ * AML cannot be verified before TIN.
+ * CFT cannot be verified before AML.
  * ============================================================
  */
 
-export const verifyTransferComplianceCode =
-  async ({
-    userId,
-    codeType,
-    code,
-  }) => {
-    if (!userId) {
-      throw createError(
-        "Authenticated user is required",
-        401,
-      );
-    }
+export const verifyTransferComplianceCode = async ({
+  userId,
+  codeType,
+  code,
+}) => {
+  if (!userId) {
+    throw createError(
+      "Authenticated user is required",
+      401,
+    );
+  }
 
-    const normalizedType =
-      String(codeType ?? "")
-        .trim()
-        .toUpperCase();
+  const normalizedType = String(
+    codeType ?? "",
+  )
+    .trim()
+    .toUpperCase();
 
-    const allowedTypes = [
-      "TIN",
-      "TAX",
-      "TAX_CODE",
-      "AML",
-      "CFT",
-    ];
+  const allowedTypes = [
+    "TIN",
+    "TAX",
+    "TAX_CODE",
+    "AML",
+    "CFT",
+  ];
 
-    if (
-      !allowedTypes.includes(
-        normalizedType,
-      )
-    ) {
-      throw createError(
-        "Invalid compliance code type",
-        400,
-      );
-    }
+  if (!allowedTypes.includes(normalizedType)) {
+    throw createError(
+      "Invalid compliance code type",
+      400,
+    );
+  }
 
-    const normalizedCode =
+  const type =
+    normalizedType === "TAX" ||
+    normalizedType === "TAX_CODE"
+      ? "TIN"
+      : normalizedType;
+
+  const label =
+    type === "TIN"
+      ? "TIN / Tax Code"
+      : type === "AML"
+        ? "AML Code"
+        : "CFT Code";
+
+  const normalizedCode =
+    normalizeComplianceCode(code);
+
+  if (!normalizedCode) {
+    throw createError(
+      `${label} is required`,
+      400,
+    );
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * ADMIN SETTINGS
+   * ----------------------------------------------------------
+   */
+
+  const settings =
+    await prisma.complianceSettings.findFirst({
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+  const enabled =
+    type === "TIN"
+      ? Boolean(settings?.tinCheckEnabled)
+      : type === "AML"
+        ? Boolean(settings?.amlCheckEnabled)
+        : Boolean(settings?.cftCheckEnabled);
+
+  /*
+   * If this check is disabled by admin,
+   * it is automatically considered not required.
+   */
+
+  if (!enabled) {
+    return {
+      verified: true,
+      codeType: type,
+      status: "NOT_REQUIRED",
+      message:
+        `${label} compliance check is not enabled.`,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * LOAD KYC
+   * ----------------------------------------------------------
+   *
+   * IMPORTANT:
+   * AML/CFT MUST be included here.
+   */
+
+  const kyc =
+    await prisma.kyc.findUnique({
+      where: {
+        userId,
+      },
+
+      select: {
+        status: true,
+
+        taxIdentificationNumber: true,
+        taxCodeVerified: true,
+
+        amlCode: true,
+        amlCodeVerified: true,
+
+        cftCode: true,
+        cftCodeVerified: true,
+      },
+    });
+
+  if (!kyc) {
+    throw createError(
+      "KYC information was not found",
+      403,
+    );
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * TIN
+   * ----------------------------------------------------------
+   */
+
+  if (type === "TIN") {
+    const storedTin =
       normalizeComplianceCode(
-        code,
+        kyc.taxIdentificationNumber,
       );
 
-    const type =
-      normalizedType === "TAX" ||
-      normalizedType === "TAX_CODE"
-        ? "TIN"
-        : normalizedType;
-
-    const label =
-      type === "TIN"
-        ? "TIN / Tax Code"
-        : type === "AML"
-          ? "AML Code"
-          : "CFT Code";
-
-    if (!normalizedCode) {
+    if (!storedTin || !kyc.taxCodeVerified) {
       throw createError(
-        `${label} is required`,
-        400,
-      );
-    }
-
-    const settings =
-      await prisma.complianceSettings.findFirst({
-        orderBy: {
-          createdAt: "asc",
-        },
-      });
-
-    const enabled =
-      type === "TIN"
-        ? Boolean(
-            settings?.tinCheckEnabled,
-          )
-        : type === "AML"
-          ? Boolean(
-              settings?.amlCheckEnabled,
-            )
-          : Boolean(
-              settings?.cftCheckEnabled,
-            );
-
-    if (!enabled) {
-      return {
-        verified: true,
-        codeType: type,
-        status: "NOT_REQUIRED",
-        message:
-          `${label} compliance check is not enabled.`,
-      };
-    }
-
-    const kyc =
-      await prisma.kyc.findUnique({
-        where: {
-          userId,
-        },
-
-        select: {
-          status: true,
-
-          taxIdentificationNumber:
-            true,
-
-          taxCodeVerified:
-            true,
-
-          amlCode:
-            true,
-
-          amlCodeVerified:
-            true,
-
-          cftCode:
-            true,
-
-          cftCodeVerified:
-            true,
-        },
-      });
-
-    if (!kyc) {
-      throw createError(
-        "KYC information was not found",
+        "Your TIN / Tax Code has not been verified by the bank",
         403,
       );
     }
 
-    let storedCode = "";
-
-    let verified = false;
-
-    if (type === "TIN") {
-      storedCode =
-        normalizeComplianceCode(
-          kyc.taxIdentificationNumber,
-        );
-
-      verified =
-        Boolean(
-          kyc.taxCodeVerified,
-        );
-    }
-
-    if (type === "AML") {
-      storedCode =
-        normalizeComplianceCode(
-          kyc.amlCode,
-        );
-
-      verified =
-        Boolean(
-          kyc.amlCodeVerified,
-        );
-    }
-
-    if (type === "CFT") {
-      storedCode =
-        normalizeComplianceCode(
-          kyc.cftCode,
-        );
-
-      verified =
-        Boolean(
-          kyc.cftCodeVerified,
-        );
-    }
-
-    if (
-      !storedCode ||
-      !verified
-    ) {
+    if (normalizedCode !== storedTin) {
       throw createError(
-        `Your ${label} has not been verified`,
-        403,
-      );
-    }
-
-    if (
-      normalizedCode !==
-      storedCode
-    ) {
-      throw createError(
-        `Invalid ${label}`,
+        "Invalid TIN / Tax Code",
         403,
       );
     }
 
     return {
       verified: true,
-
-      codeType:
-        type,
-
-      status:
-        "PASSED",
-
+      codeType: "TIN",
+      status: "PASSED",
       message:
-        `${label} verified successfully.`,
+        "TIN / Tax Code verified successfully.",
+      nextStep:
+        settings?.amlCheckEnabled
+          ? "AML"
+          : settings?.cftCheckEnabled
+            ? "CFT"
+            : "COMPLETE",
     };
-  };
+  }
 
-/*
- * ============================================================
- * RUN TRANSFER COMPLIANCE CHECKS
- * ============================================================
- */
+  /*
+   * ----------------------------------------------------------
+   * AML
+   *
+   * AML requires TIN to have already been verified.
+   * ----------------------------------------------------------
+   */
 
-const runTransferComplianceChecks =
-  async ({
-    tx,
-    userId,
-    tinCode,
-    amlCode,
-    cftCode,
-  }) => {
-    const settings =
-      await tx.complianceSettings.findFirst({
-        orderBy: {
-          createdAt: "asc",
-        },
-      });
-
-    const tinEnabled =
-      Boolean(
-        settings?.tinCheckEnabled,
-      );
-
-    const amlEnabled =
-      Boolean(
-        settings?.amlCheckEnabled,
-      );
-
-    const cftEnabled =
-      Boolean(
-        settings?.cftCheckEnabled,
-      );
-
-    const anyCheckEnabled =
-      tinEnabled ||
-      amlEnabled ||
-      cftEnabled;
-
-    if (!anyCheckEnabled) {
-      return {
-        complianceStatus:
-          "NOT_REQUIRED",
-
-        tinCheckStatus:
-          "NOT_REQUIRED",
-
-        amlCheckStatus:
-          "NOT_REQUIRED",
-
-        cftCheckStatus:
-          "NOT_REQUIRED",
-
-        complianceReason:
-          null,
-      };
-    }
-
-    const kyc =
-      await tx.kyc.findUnique({
-        where: {
-          userId,
-        },
-
-        select: {
-          status: true,
-
-          taxIdentificationNumber:
-            true,
-
-          taxCodeVerified:
-            true,
-
-          amlCode:
-            true,
-
-          amlCodeVerified:
-            true,
-
-          cftCode:
-            true,
-
-          cftCodeVerified:
-            true,
-        },
-      });
-
-    let tinCheckStatus =
-      tinEnabled
-        ? "FAILED"
-        : "NOT_REQUIRED";
-
-    let amlCheckStatus =
-      amlEnabled
-        ? "FAILED"
-        : "NOT_REQUIRED";
-
-    let cftCheckStatus =
-      cftEnabled
-        ? "FAILED"
-        : "NOT_REQUIRED";
-
-    const reasons = [];
-
-    if (tinEnabled) {
-      const submittedTin =
-        normalizeComplianceCode(
-          tinCode,
-        );
-
-      const storedTin =
-        normalizeComplianceCode(
-          kyc?.taxIdentificationNumber,
-        );
-
-      const tinVerified =
-        Boolean(
-          kyc?.taxCodeVerified,
-        );
-
-      if (!submittedTin) {
-        reasons.push(
-          "TIN / Tax Code is required",
-        );
-      } else if (
-        !storedTin ||
-        !tinVerified
-      ) {
-        reasons.push(
-          "Your TIN / Tax Code has not been verified by the bank",
-        );
-      } else if (
-        submittedTin !==
-        storedTin
-      ) {
-        reasons.push(
-          "Invalid TIN / Tax Code",
-        );
-      } else {
-        tinCheckStatus =
-          "PASSED";
-      }
-    }
-
-    if (amlEnabled) {
-      const submittedAml =
-        normalizeComplianceCode(
-          amlCode,
-        );
-
-      const storedAml =
-        normalizeComplianceCode(
-          kyc?.amlCode,
-        );
-
-      const amlVerified =
-        Boolean(
-          kyc?.amlCodeVerified,
-        );
-
-      if (!submittedAml) {
-        reasons.push(
-          "AML Code is required",
-        );
-      } else if (
-        !storedAml ||
-        !amlVerified
-      ) {
-        reasons.push(
-          "Your AML Code has not been verified by the bank",
-        );
-      } else if (
-        submittedAml !==
-        storedAml
-      ) {
-        reasons.push(
-          "Invalid AML Code",
-        );
-      } else {
-        amlCheckStatus =
-          "PASSED";
-      }
-    }
-
-    if (cftEnabled) {
-      const submittedCft =
-        normalizeComplianceCode(
-          cftCode,
-        );
-
-      const storedCft =
-        normalizeComplianceCode(
-          kyc?.cftCode,
-        );
-
-      const cftVerified =
-        Boolean(
-          kyc?.cftCodeVerified,
-        );
-
-      if (!submittedCft) {
-        reasons.push(
-          "CFT Code is required",
-        );
-      } else if (
-        !storedCft ||
-        !cftVerified
-      ) {
-        reasons.push(
-          "Your CFT Code has not been verified by the bank",
-        );
-      } else if (
-        submittedCft !==
-        storedCft
-      ) {
-        reasons.push(
-          "Invalid CFT Code",
-        );
-      } else {
-        cftCheckStatus =
-          "PASSED";
-      }
-    }
-
-    const failed =
-      tinCheckStatus ===
-        "FAILED" ||
-      amlCheckStatus ===
-        "FAILED" ||
-      cftCheckStatus ===
-        "FAILED";
-
-    return {
-      complianceStatus:
-        failed
-          ? "BLOCKED"
-          : "CLEARED",
-
-      tinCheckStatus,
-
-      amlCheckStatus,
-
-      cftCheckStatus,
-
-      complianceReason:
-        reasons.length > 0
-          ? reasons.join("; ")
-          : null,
-    };
-  };
-
-/*
- * ============================================================
- * CREATE EXTERNAL BANK TRANSFER
- * ============================================================
- */
-
-export const createBankTransfer =
-  async ({
-    userId,
-    accountId,
-    beneficiaryId,
-    amount,
-    tinCode,
-    amlCode,
-    cftCode,
-    description,
-    idempotencyKey,
-  }) => {
-    if (!userId) {
+  if (type === "AML") {
+    if (
+      settings?.tinCheckEnabled &&
+      (!kyc.taxIdentificationNumber ||
+        !kyc.taxCodeVerified)
+    ) {
       throw createError(
-        "Authenticated user is required",
-        401,
+        "Please verify your TIN / Tax Code first",
+        403,
       );
     }
 
-    if (!accountId) {
-      throw createError(
-        "Source account is required",
-      );
-    }
-
-    if (!beneficiaryId) {
-      throw createError(
-        "Beneficiary is required",
-      );
-    }
-
-    const transferAmount =
-      assertPositiveMoney(
-        amount,
-        "Transfer amount",
+    const storedAml =
+      normalizeComplianceCode(
+        kyc.amlCode,
       );
 
     if (
-      transferAmount.greaterThan(
-        MAX_TRANSFER_AMOUNT,
-      )
+      !storedAml ||
+      !kyc.amlCodeVerified
     ) {
       throw createError(
-        "Transfer amount exceeds the permitted limit",
+        "Your AML Code has not been verified by the bank",
+        403,
       );
     }
 
-    const normalizedIdempotencyKey =
-      normalizeIdempotencyKey(
-        idempotencyKey,
+    if (normalizedCode !== storedAml) {
+      throw createError(
+        "Invalid AML Code",
+        403,
       );
-
-    if (normalizedIdempotencyKey) {
-      const existing =
-        await prisma.transfer.findUnique({
-          where: {
-            idempotencyKey:
-              normalizedIdempotencyKey,
-          },
-
-          include:
-            transferInclude,
-        });
-
-      if (
-        existing &&
-        existing.senderId ===
-          userId
-      ) {
-        return {
-          ...serializeTransfer(
-            existing,
-          ),
-
-          alreadyExists:
-            true,
-        };
-      }
-
-      if (existing) {
-        throw createError(
-          "The supplied idempotency key has already been used",
-          409,
-        );
-      }
     }
 
-    const result =
-      await prisma.$transaction(
-        async (tx) => {
-          const lockedAccounts =
-            await tx.$queryRaw`
+    return {
+      verified: true,
+      codeType: "AML",
+      status: "PASSED",
+      message:
+        "AML Code verified successfully.",
+      nextStep:
+        settings?.cftCheckEnabled
+          ? "CFT"
+          : "COMPLETE",
+    };
+  }
 
-              SELECT
-                id,
-                "accountNumber",
-                "userId",
-                "currencyId",
-                status,
-                balance,
-                "availableBalance",
-                "ledgerBalance",
-                "minimumBalance"
-              FROM "Account"
-              WHERE id = ${accountId}
-                AND "userId" = ${userId}
-              FOR UPDATE
+  /*
+   * ----------------------------------------------------------
+   * CFT
+   *
+   * CFT requires AML to have already been verified.
+   * ----------------------------------------------------------
+   */
 
-            `;
+  if (type === "CFT") {
+    if (
+      settings?.tinCheckEnabled &&
+      (!kyc.taxIdentificationNumber ||
+        !kyc.taxCodeVerified)
+    ) {
+      throw createError(
+        "Please verify your TIN / Tax Code first",
+        403,
+      );
+    }
 
-          const account =
-            lockedAccounts[0];
+    if (
+      settings?.amlCheckEnabled &&
+      (!kyc.amlCode ||
+        !kyc.amlCodeVerified)
+    ) {
+      throw createError(
+        "Please verify your AML Code first",
+        403,
+      );
+    }
 
-          if (!account) {
-            throw createError(
-              "Source account was not found",
-              404,
-            );
-          }
+    const storedCft =
+      normalizeComplianceCode(
+        kyc.cftCode,
+      );
 
-          if (
-            account.status !==
-            "ACTIVE"
-          ) {
-            throw createError(
-              "The source account is not active",
-            );
-          }
+    if (
+      !storedCft ||
+      !kyc.cftCodeVerified
+    ) {
+      throw createError(
+        "Your CFT Code has not been verified by the bank",
+        403,
+      );
+    }
 
-          const beneficiary =
-            await tx.beneficiary.findFirst({
-              where: {
-                id:
-                  beneficiaryId,
+    if (normalizedCode !== storedCft) {
+      throw createError(
+        "Invalid CFT Code",
+        403,
+      );
+    }
 
+    return {
+      verified: true,
+      codeType: "CFT",
+      status: "PASSED",
+      message:
+        "CFT Code verified successfully.",
+      nextStep: "COMPLETE",
+    };
+  }
+
+  throw createError(
+    "Unable to verify compliance code",
+    400,
+  );
+};
+
+/*
+ * ============================================================
+ * RUN COMPLETE TRANSFER COMPLIANCE CHECK
+ *
+ * This is the FINAL server-side check before money is moved.
+ *
+ * ============================================================
+ */
+
+const runTransferComplianceChecks = async ({
+  tx,
+  userId,
+  tinCode,
+  amlCode,
+  cftCode,
+}) => {
+  const settings =
+    await tx.complianceSettings.findFirst({
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+  const tinEnabled =
+    Boolean(settings?.tinCheckEnabled);
+
+  const amlEnabled =
+    Boolean(settings?.amlCheckEnabled);
+
+  const cftEnabled =
+    Boolean(settings?.cftCheckEnabled);
+
+  const anyCheckEnabled =
+    tinEnabled ||
+    amlEnabled ||
+    cftEnabled;
+
+  if (!anyCheckEnabled) {
+    return {
+      complianceStatus: "NOT_REQUIRED",
+      tinCheckStatus: "NOT_REQUIRED",
+      amlCheckStatus: "NOT_REQUIRED",
+      cftCheckStatus: "NOT_REQUIRED",
+      complianceReason: null,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * LOAD ALL KYC COMPLIANCE VALUES
+   * ----------------------------------------------------------
+   */
+
+  const kyc =
+    await tx.kyc.findUnique({
+      where: {
+        userId,
+      },
+
+      select: {
+        status: true,
+
+        taxIdentificationNumber: true,
+        taxCodeVerified: true,
+
+        amlCode: true,
+        amlCodeVerified: true,
+
+        cftCode: true,
+        cftCodeVerified: true,
+      },
+    });
+
+  if (!kyc) {
+    return {
+      complianceStatus: "BLOCKED",
+
+      tinCheckStatus:
+        tinEnabled
+          ? "FAILED"
+          : "NOT_REQUIRED",
+
+      amlCheckStatus:
+        amlEnabled
+          ? "FAILED"
+          : "NOT_REQUIRED",
+
+      cftCheckStatus:
+        cftEnabled
+          ? "FAILED"
+          : "NOT_REQUIRED",
+
+      complianceReason:
+        "KYC information was not found",
+    };
+  }
+
+  let tinCheckStatus =
+    tinEnabled
+      ? "FAILED"
+      : "NOT_REQUIRED";
+
+  let amlCheckStatus =
+    amlEnabled
+      ? "FAILED"
+      : "NOT_REQUIRED";
+
+  let cftCheckStatus =
+    cftEnabled
+      ? "FAILED"
+      : "NOT_REQUIRED";
+
+  const reasons = [];
+
+  /*
+   * ----------------------------------------------------------
+   * TIN CHECK
+   * ----------------------------------------------------------
+   */
+
+  if (tinEnabled) {
+    const submittedTin =
+      normalizeComplianceCode(
+        tinCode,
+      );
+
+    const storedTin =
+      normalizeComplianceCode(
+        kyc.taxIdentificationNumber,
+      );
+
+    if (!submittedTin) {
+      reasons.push(
+        "TIN / Tax Code is required",
+      );
+    } else if (
+      !storedTin ||
+      !kyc.taxCodeVerified
+    ) {
+      reasons.push(
+        "Your TIN / Tax Code has not been verified by the bank",
+      );
+    } else if (
+      submittedTin !== storedTin
+    ) {
+      reasons.push(
+        "Invalid TIN / Tax Code",
+      );
+    } else {
+      tinCheckStatus = "PASSED";
+    }
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * AML CHECK
+   * ----------------------------------------------------------
+   */
+
+  if (amlEnabled) {
+    const submittedAml =
+      normalizeComplianceCode(
+        amlCode,
+      );
+
+    const storedAml =
+      normalizeComplianceCode(
+        kyc.amlCode,
+      );
+
+    if (!submittedAml) {
+      reasons.push(
+        "AML Code is required",
+      );
+    } else if (
+      !storedAml ||
+      !kyc.amlCodeVerified
+    ) {
+      reasons.push(
+        "Your AML Code has not been verified by the bank",
+      );
+    } else if (
+      submittedAml !== storedAml
+    ) {
+      reasons.push(
+        "Invalid AML Code",
+      );
+    } else {
+      amlCheckStatus = "PASSED";
+    }
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * CFT CHECK
+   * ----------------------------------------------------------
+   */
+
+  if (cftEnabled) {
+    const submittedCft =
+      normalizeComplianceCode(
+        cftCode,
+      );
+
+    const storedCft =
+      normalizeComplianceCode(
+        kyc.cftCode,
+      );
+
+    if (!submittedCft) {
+      reasons.push(
+        "CFT Code is required",
+      );
+    } else if (
+      !storedCft ||
+      !kyc.cftCodeVerified
+    ) {
+      reasons.push(
+        "Your CFT Code has not been verified by the bank",
+      );
+    } else if (
+      submittedCft !== storedCft
+    ) {
+      reasons.push(
+        "Invalid CFT Code",
+      );
+    } else {
+      cftCheckStatus = "PASSED";
+    }
+  }
+
+  const failed =
+    tinCheckStatus === "FAILED" ||
+    amlCheckStatus === "FAILED" ||
+    cftCheckStatus === "FAILED";
+
+  return {
+    complianceStatus:
+      failed
+        ? "BLOCKED"
+        : "CLEARED",
+
+    tinCheckStatus,
+    amlCheckStatus,
+    cftCheckStatus,
+
+    complianceReason:
+      reasons.length
+        ? reasons.join("; ")
+        : null,
+  };
+};
+
+/*
+ * ============================================================
+ * CREATE BANK TRANSFER
+ * ============================================================
+ */
+
+export const createBankTransfer = async ({
+  userId,
+  accountId,
+  beneficiaryId,
+  amount,
+  tinCode,
+  amlCode,
+  cftCode,
+  description,
+  idempotencyKey,
+}) => {
+  if (!userId) {
+    throw createError(
+      "Authenticated user is required",
+      401,
+    );
+  }
+
+  if (!accountId) {
+    throw createError(
+      "Source account is required",
+    );
+  }
+
+  if (!beneficiaryId) {
+    throw createError(
+      "Beneficiary is required",
+    );
+  }
+
+  const transferAmount =
+    assertPositiveMoney(
+      amount,
+      "Transfer amount",
+    );
+
+  if (
+    transferAmount.greaterThan(
+      MAX_TRANSFER_AMOUNT,
+    )
+  ) {
+    throw createError(
+      "Transfer amount exceeds the permitted limit",
+    );
+  }
+
+  const normalizedIdempotencyKey =
+    normalizeIdempotencyKey(
+      idempotencyKey,
+    );
+
+  /*
+   * ----------------------------------------------------------
+   * IDEMPOTENCY
+   * ----------------------------------------------------------
+   */
+
+  if (normalizedIdempotencyKey) {
+    const existing =
+      await prisma.transfer.findUnique({
+        where: {
+          idempotencyKey:
+            normalizedIdempotencyKey,
+        },
+
+        include:
+          transferInclude,
+      });
+
+    if (
+      existing &&
+      existing.senderId === userId
+    ) {
+      return {
+        ...serializeTransfer(
+          existing,
+        ),
+
+        alreadyExists: true,
+      };
+    }
+
+    if (existing) {
+      throw createError(
+        "The supplied idempotency key has already been used",
+        409,
+      );
+    }
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * TRANSACTION
+   * ----------------------------------------------------------
+   */
+
+  const result =
+    await prisma.$transaction(
+      async (tx) => {
+        /*
+         * LOCK ACCOUNT
+         */
+
+        const lockedAccounts =
+          await tx.$queryRaw`
+            SELECT
+              id,
+              "accountNumber",
+              "userId",
+              "currencyId",
+              status,
+              balance,
+              "availableBalance",
+              "ledgerBalance",
+              "minimumBalance"
+            FROM "Account"
+            WHERE id = ${accountId}
+              AND "userId" = ${userId}
+            FOR UPDATE
+          `;
+
+        const account =
+          lockedAccounts[0];
+
+        if (!account) {
+          throw createError(
+            "Source account was not found",
+            404,
+          );
+        }
+
+        if (
+          account.status !==
+          "ACTIVE"
+        ) {
+          throw createError(
+            "The source account is not active",
+          );
+        }
+
+        /*
+         * BENEFICIARY
+         */
+
+        const beneficiary =
+          await tx.beneficiary.findFirst({
+            where: {
+              id: beneficiaryId,
+              userId,
+              isActive: true,
+            },
+          });
+
+        if (!beneficiary) {
+          throw createError(
+            "Beneficiary was not found or is inactive",
+            404,
+          );
+        }
+
+        /*
+         * ------------------------------------------------------
+         * FINAL COMPLIANCE CHECK
+         *
+         * This happens BEFORE:
+         * - debit
+         * - transaction
+         * - transfer creation
+         * ------------------------------------------------------
+         */
+
+        const compliance =
+          await runTransferComplianceChecks({
+            tx,
+            userId,
+            tinCode,
+            amlCode,
+            cftCode,
+          });
+
+        if (
+          compliance.complianceStatus ===
+          "BLOCKED"
+        ) {
+          throw createError(
+            compliance.complianceReason ||
+              "Transfer blocked by compliance checks",
+            403,
+          );
+        }
+
+        /*
+         * BALANCES
+         */
+
+        const currentBalance =
+          toDecimal(
+            account.balance,
+          );
+
+        const currentAvailableBalance =
+          toDecimal(
+            account.availableBalance,
+          );
+
+        const currentLedgerBalance =
+          toDecimal(
+            account.ledgerBalance,
+          );
+
+        const minimumBalance =
+          toDecimal(
+            account.minimumBalance,
+          );
+
+        const transferFee =
+          new Prisma.Decimal("0");
+
+        const totalDebit =
+          transferAmount.add(
+            transferFee,
+          );
+
+        if (
+          currentAvailableBalance.lessThan(
+            totalDebit,
+          )
+        ) {
+          throw createError(
+            "Insufficient available balance",
+            400,
+          );
+        }
+
+        const remainingBalance =
+          currentBalance.sub(
+            totalDebit,
+          );
+
+        if (
+          remainingBalance.lessThan(
+            minimumBalance,
+          )
+        ) {
+          throw createError(
+            "Transfer would reduce the account below its minimum balance",
+            400,
+          );
+        }
+
+        /*
+         * CURRENCY
+         */
+
+        const currency =
+          await tx.currency.findUnique({
+            where: {
+              id: account.currencyId,
+            },
+          });
+
+        if (!currency) {
+          throw createError(
+            "Account currency was not found",
+            500,
+          );
+        }
+
+        /*
+         * REFERENCE
+         */
+
+        const reference =
+          await generateReference(
+            "TRF",
+          );
+
+        /*
+         * UPDATE ACCOUNT
+         */
+
+        const updatedAccount =
+          await tx.account.update({
+            where: {
+              id: account.id,
+            },
+
+            data: {
+              balance:
+                remainingBalance,
+
+              availableBalance:
+                currentAvailableBalance.sub(
+                  totalDebit,
+                ),
+
+              ledgerBalance:
+                currentLedgerBalance.sub(
+                  totalDebit,
+                ),
+            },
+          });
+
+        /*
+         * CREATE TRANSFER
+         */
+
+        const createdTransfer =
+          await tx.transfer.create({
+            data: {
+              reference,
+
+              senderId:
                 userId,
 
-                isActive:
-                  true,
-              },
-            });
-
-          if (!beneficiary) {
-            throw createError(
-              "Beneficiary was not found or is inactive",
-              404,
-            );
-          }
-
-          const compliance =
-            await runTransferComplianceChecks({
-              tx,
-              userId,
-              tinCode,
-              amlCode,
-              cftCode,
-            });
-
-          if (
-            compliance.complianceStatus ===
-            "BLOCKED"
-          ) {
-            throw createError(
-              compliance.complianceReason ||
-                "Transfer blocked by compliance checks",
-              403,
-            );
-          }
-
-          const currentBalance =
-            toDecimal(
-              account.balance,
-            );
-
-          const currentAvailableBalance =
-            toDecimal(
-              account.availableBalance,
-            );
-
-          const currentLedgerBalance =
-            toDecimal(
-              account.ledgerBalance,
-            );
-
-          const minimumBalance =
-            toDecimal(
-              account.minimumBalance,
-            );
-
-          const transferFee =
-            new Prisma.Decimal(
-              "0",
-            );
-
-          const totalDebit =
-            transferAmount.add(
-              transferFee,
-            );
-
-          if (
-            currentAvailableBalance.lessThan(
-              totalDebit,
-            )
-          ) {
-            throw createError(
-              "Insufficient available balance",
-            );
-          }
-
-          const remainingBalance =
-            currentBalance.sub(
-              totalDebit,
-            );
-
-          if (
-            remainingBalance.lessThan(
-              minimumBalance,
-            )
-          ) {
-            throw createError(
-              "Transfer would reduce the account below its minimum balance",
-            );
-          }
-
-          const currency =
-            await tx.currency.findUnique({
-              where: {
-                id:
-                  account.currencyId,
-              },
-            });
-
-          if (!currency) {
-            throw createError(
-              "Account currency was not found",
-              500,
-            );
-          }
-
-          const reference =
-            await generateReference(
-              "TRF",
-            );
-
-          const updatedAccount =
-            await tx.account.update({
-              where: {
-                id:
-                  account.id,
-              },
-
-              data: {
-                balance:
-                  remainingBalance,
-
-                availableBalance:
-                  currentAvailableBalance.sub(
-                    totalDebit,
-                  ),
-
-                ledgerBalance:
-                  currentLedgerBalance.sub(
-                    totalDebit,
-                  ),
-              },
-            });
-
-          /*
-           * IMPORTANT:
-           *
-           * Transfer has NO accountId field.
-           * Transfer has NO currencyId field.
-           *
-           * The source account is stored in metadata.
-           * The transfer currency is stored using currencyCode.
-           */
-
-          const createdTransfer =
-            await tx.transfer.create({
-              data: {
-                reference,
-
-                senderId:
-                  userId,
-
-                beneficiaryId,
-
-                type:
-                  "BANK",
-
-                amount:
-                  transferAmount,
-
-                fee:
-                  transferFee,
-
-                total:
-                  totalDebit,
-
-                currencyCode:
-                  currency.code,
-
-                description:
-                  description
-                    ?.trim() ||
-                  null,
-
-                status:
-                  "PENDING",
-
-                idempotencyKey:
-                  normalizedIdempotencyKey ||
-                  null,
-
-                complianceStatus:
-                  compliance.complianceStatus,
-
-                tinCheckStatus:
-                  compliance.tinCheckStatus,
-
-                amlCheckStatus:
-                  compliance.amlCheckStatus,
-
-                cftCheckStatus:
-                  compliance.cftCheckStatus,
-
-                complianceReason:
-                  compliance.complianceReason,
-
-                complianceReviewedAt:
-                  new Date(),
-
-                metadata: {
-                  accountId:
-                    account.id,
-
-                  accountNumber:
-                    account.accountNumber,
-
-                  beneficiaryId,
-
-                  sourceCurrencyCode:
-                    currency.code,
-                },
-              },
-
-              include:
-                transferInclude,
-            });
-
-          const transaction =
-            
-await tx.transaction.create({
-  data: {
-    accountId: account.id,
-    userId,
-
-    type: "TRANSFER",
-
-    amount: transferAmount,
-    fee: transferFee,
-    total: totalDebit,
-
-    currencyId: account.currencyId,
-    reference,
-
-    description:
-      description?.trim() ||
-      `Bank transfer to ${
-        beneficiary.accountName || beneficiary.name
-      }`,
-
-    status: "PENDING",
-
-    metadata: {
-      transferId: createdTransfer.id,
-      transferType: "BANK",
-      sourceAccountId: account.id,
-      beneficiaryId,
-
-      complianceStatus: compliance.complianceStatus,
-      tinCheckStatus: compliance.tinCheckStatus,
-      amlCheckStatus: compliance.amlCheckStatus,
-      cftCheckStatus: compliance.cftCheckStatus,
-      complianceReason: compliance.complianceReason,
-    },
-  },
-});
-
-
-          await tx.ledgerEntry.create({
-            data: {
               accountId:
                 account.id,
 
-              transactionId:
-                transaction.id,
+              beneficiaryId,
 
               type:
-                "DEBIT",
+                "BANK",
 
               amount:
                 transferAmount,
 
-              balanceBefore:
-                currentBalance,
+              fee:
+                transferFee,
 
-              balanceAfter:
-                remainingBalance,
+              total:
+                totalDebit,
+
+              currencyId:
+                account.currencyId,
+
+              currencyCode:
+                currency.code,
 
               description:
                 description?.trim() ||
-                `Bank transfer to ${
-                  beneficiary.accountName ||
-                  beneficiary.name
-                }`,
+                null,
+
+              status:
+                "PENDING",
+
+              idempotencyKey:
+                normalizedIdempotencyKey ||
+                null,
+
+              complianceStatus:
+                compliance.complianceStatus,
+
+              tinCheckStatus:
+                compliance.tinCheckStatus,
+
+              amlCheckStatus:
+                compliance.amlCheckStatus,
+
+              cftCheckStatus:
+                compliance.cftCheckStatus,
+
+              complianceReason:
+                compliance.complianceReason,
+
+              complianceReviewedAt:
+                new Date(),
             },
+
+            include:
+              transferInclude,
           });
 
-          
-await tx.auditLog.create({
-  data: {
-    userId,
-    action: "TRANSFER",
-    entity: "Transfer",
-    entityId: createdTransfer.id,
+        /*
+         * LEDGER TRANSACTION
+         */
 
-    description: `Bank transfer ${reference} created and awaiting admin processing`,
+        await tx.transaction.create({
+          data: {
+            accountId:
+              account.id,
 
-    metadata: {
-      reference,
-      accountId: account.id,
-      beneficiaryId,
+            userId,
 
-      amount: transferAmount.toString(),
-      fee: transferFee.toString(),
-      total: totalDebit.toString(),
+            type:
+              "TRANSFER",
 
-      complianceStatus: compliance.complianceStatus,
-      tinCheckStatus: compliance.tinCheckStatus,
-      amlCheckStatus: compliance.amlCheckStatus,
-      cftCheckStatus: compliance.cftCheckStatus,
-      complianceReason: compliance.complianceReason,
+            direction:
+              "DEBIT",
 
-      balanceBefore: currentBalance.toString(),
-      balanceAfter: remainingBalance.toString(),
-    },
-  },
-});
+            amount:
+              transferAmount,
 
+            fee:
+              transferFee,
 
-          return {
-            transfer:
-              createdTransfer,
+            total:
+              totalDebit,
 
-            account:
-              updatedAccount,
+            balanceBefore:
+              currentBalance,
 
-            compliance,
-          };
-        },
-      );
+            balanceAfter:
+              remainingBalance,
 
-    return {
-      ...serializeTransfer(
-        result.transfer,
-      ),
+            currencyId:
+              account.currencyId,
 
-      complianceStatus:
-        result.compliance
-          .complianceStatus,
+            reference,
 
-      tinCheckStatus:
-        result.compliance
-          .tinCheckStatus,
+            description:
+              description?.trim() ||
+              `Bank transfer to ${
+                beneficiary.accountName ||
+                beneficiary.name
+              }`,
 
-      amlCheckStatus:
-        result.compliance
-          .amlCheckStatus,
+            status:
+              "COMPLETED",
 
-      cftCheckStatus:
-        result.compliance
-          .cftCheckStatus,
+            metadata: {
+              transferId:
+                createdTransfer.id,
 
-      complianceReason:
-        result.compliance
-          .complianceReason,
+              beneficiaryId,
 
-      account: {
-        id:
-          result.account.id,
+              complianceStatus:
+                compliance.complianceStatus,
 
-        accountNumber:
-          result.account
-            .accountNumber,
+              tinCheckStatus:
+                compliance.tinCheckStatus,
 
-        balance:
-          serializeMoney(
-            result.account
-              .balance,
-          ),
+              amlCheckStatus:
+                compliance.amlCheckStatus,
 
-        availableBalance:
-          serializeMoney(
-            result.account
-              .availableBalance,
-          ),
+              cftCheckStatus:
+                compliance.cftCheckStatus,
 
-        ledgerBalance:
-          serializeMoney(
-            result.account
-              .ledgerBalance,
-          ),
+              complianceReason:
+                compliance.complianceReason,
+            },
+          },
+        });
+
+        /*
+         * AUDIT
+         */
+
+        await tx.auditLog.create({
+          data: {
+            userId,
+
+            action:
+              "BANK_TRANSFER_CREATED",
+
+            entityType:
+              "Transfer",
+
+            entityId:
+              createdTransfer.id,
+
+            metadata: {
+              reference,
+
+              accountId:
+                account.id,
+
+              beneficiaryId,
+
+              amount:
+                transferAmount.toString(),
+
+              fee:
+                transferFee.toString(),
+
+              total:
+                totalDebit.toString(),
+
+              complianceStatus:
+                compliance.complianceStatus,
+
+              tinCheckStatus:
+                compliance.tinCheckStatus,
+
+              amlCheckStatus:
+                compliance.amlCheckStatus,
+
+              cftCheckStatus:
+                compliance.cftCheckStatus,
+
+              complianceReason:
+                compliance.complianceReason,
+
+              balanceBefore:
+                currentBalance.toString(),
+
+              balanceAfter:
+                remainingBalance.toString(),
+            },
+          },
+        });
+
+        return {
+          transfer:
+            createdTransfer,
+
+          account:
+            updatedAccount,
+
+          compliance,
+        };
       },
-    };
+    );
+
+  return {
+    ...serializeTransfer(
+      result.transfer,
+    ),
+
+    complianceStatus:
+      result.compliance
+        .complianceStatus,
+
+    tinCheckStatus:
+      result.compliance
+        .tinCheckStatus,
+
+    amlCheckStatus:
+      result.compliance
+        .amlCheckStatus,
+
+    cftCheckStatus:
+      result.compliance
+        .cftCheckStatus,
+
+    complianceReason:
+      result.compliance
+        .complianceReason,
+
+    account: {
+      id:
+        result.account.id,
+
+      accountNumber:
+        result.account.accountNumber,
+
+      balance:
+        serializeMoney(
+          result.account.balance,
+        ),
+
+      availableBalance:
+        serializeMoney(
+          result.account.availableBalance,
+        ),
+
+      ledgerBalance:
+        serializeMoney(
+          result.account.ledgerBalance,
+        ),
+    },
   };
+};
 
 /*
  * ============================================================
@@ -1199,11 +1295,8 @@ export const getBankTransferById =
     const transfer =
       await prisma.transfer.findFirst({
         where: {
-          id:
-            transferId,
-
-          senderId:
-            userId,
+          id: transferId,
+          senderId: userId,
         },
 
         include:
@@ -1274,7 +1367,7 @@ export const getBankTransferByReference =
 
 /*
  * ============================================================
- * LIST USER BANK TRANSFERS
+ * LIST USER TRANSFERS
  * ============================================================
  */
 
@@ -1312,14 +1405,12 @@ export const listBankTransfers =
       safeLimit;
 
     const where = {
-      senderId:
-        userId,
+      senderId: userId,
     };
 
     if (
       status &&
-      typeof status ===
-        "string"
+      typeof status === "string"
     ) {
       where.status =
         status.trim();
@@ -1342,7 +1433,6 @@ export const listBankTransfers =
           },
 
           skip,
-
           take:
             safeLimit,
         }),
@@ -1378,7 +1468,7 @@ export const listBankTransfers =
 
 /*
  * ============================================================
- * CANCEL BANK TRANSFER
+ * CANCEL TRANSFER
  * ============================================================
  */
 
@@ -1430,40 +1520,17 @@ export const cancelBankTransfer =
             );
           }
 
-          const metadata =
-            transfer.metadata &&
-            typeof transfer.metadata ===
-              "object"
-              ? transfer.metadata
-              : {};
-
-          const sourceAccountId =
-            typeof metadata.accountId ===
-              "string"
-              ? metadata.accountId
-              : null;
-
-          if (!sourceAccountId) {
-            throw createError(
-              "Source account information is missing from the transfer",
-              500,
-            );
-          }
-
           const lockedAccounts =
             await tx.$queryRaw`
-
               SELECT
                 id,
-                "currencyId",
                 balance,
                 "availableBalance",
                 "ledgerBalance"
               FROM "Account"
-              WHERE id = ${sourceAccountId}
+              WHERE id = ${transfer.accountId}
                 AND "userId" = ${userId}
               FOR UPDATE
-
             `;
 
           const account =
@@ -1540,60 +1607,26 @@ export const cancelBankTransfer =
                 transferInclude,
             });
 
-          const transaction =
-            await tx.transaction.create({
-              data: {
-                accountId:
-                  account.id,
-
-                userId,
-
-                type:
-                  "REFUND",
-
-                amount:
-                  transfer.amount,
-
-                fee:
-                  ZERO,
-
-                total:
-                  transfer.total,
-
-                currencyId:
-                  account.currencyId,
-
-                reference:
-                  `REV-${transfer.reference}`,
-
-                description:
-                  `Reversal for cancelled transfer ${transfer.reference}`,
-
-                status:
-                  "COMPLETED",
-
-                metadata: {
-                  transferId:
-                    transfer.id,
-
-                  originalReference:
-                    transfer.reference,
-                },
-              },
-            });
-
-          await tx.ledgerEntry.create({
+          await tx.transaction.create({
             data: {
               accountId:
                 account.id,
 
-              transactionId:
-                transaction.id,
+              userId,
 
               type:
+                "TRANSFER_REVERSAL",
+
+              direction:
                 "CREDIT",
 
               amount:
+                transfer.amount,
+
+              fee:
+                ZERO,
+
+              total:
                 transfer.total,
 
               balanceBefore:
@@ -1602,8 +1635,25 @@ export const cancelBankTransfer =
               balanceAfter:
                 updatedBalance,
 
+              currencyId:
+                transfer.currencyId,
+
+              reference:
+                `REV-${transfer.reference}`,
+
               description:
                 `Reversal for cancelled transfer ${transfer.reference}`,
+
+              status:
+                "COMPLETED",
+
+              metadata: {
+                transferId:
+                  transfer.id,
+
+                originalReference:
+                  transfer.reference,
+              },
             },
           });
 
@@ -1612,9 +1662,9 @@ export const cancelBankTransfer =
               userId,
 
               action:
-                "TRANSFER",
+                "BANK_TRANSFER_CANCELLED",
 
-              entity:
+              entityType:
                 "Transfer",
 
               entityId:
@@ -1647,7 +1697,7 @@ export const cancelBankTransfer =
 
 /*
  * ============================================================
- * ADMIN: GET TRANSFER
+ * ADMIN GET TRANSFER
  * ============================================================
  */
 
@@ -1686,7 +1736,7 @@ export const getTransferForAdmin =
 
 /*
  * ============================================================
- * ADMIN: LIST TRANSFERS
+ * ADMIN LIST TRANSFERS
  * ============================================================
  */
 
@@ -1721,8 +1771,7 @@ export const listTransfersForAdmin =
 
     if (
       status &&
-      typeof status ===
-        "string"
+      typeof status === "string"
     ) {
       where.status =
         status.trim();
@@ -1739,8 +1788,7 @@ export const listTransfersForAdmin =
 
     if (
       search &&
-      typeof search ===
-        "string"
+      typeof search === "string"
     ) {
       const value =
         search.trim();
@@ -1787,7 +1835,6 @@ export const listTransfersForAdmin =
           },
 
           skip,
-
           take:
             safeLimit,
         }),
@@ -1823,7 +1870,7 @@ export const listTransfersForAdmin =
 
 /*
  * ============================================================
- * ADMIN: APPROVE TRANSFER
+ * ADMIN APPROVE TRANSFER
  * ============================================================
  */
 
@@ -1905,9 +1952,9 @@ export const approveBankTransfer =
                 adminUserId,
 
               action:
-                "TRANSFER",
+                "BANK_TRANSFER_APPROVED",
 
-              entity:
+              entityType:
                 "Transfer",
 
               entityId:
@@ -1943,7 +1990,7 @@ export const approveBankTransfer =
 
 /*
  * ============================================================
- * ADMIN: REJECT TRANSFER
+ * ADMIN REJECT TRANSFER
  * ============================================================
  */
 
@@ -2004,40 +2051,17 @@ export const rejectBankTransfer =
             );
           }
 
-          const metadata =
-            transfer.metadata &&
-            typeof transfer.metadata ===
-              "object"
-              ? transfer.metadata
-              : {};
-
-          const sourceAccountId =
-            typeof metadata.accountId ===
-              "string"
-              ? metadata.accountId
-              : null;
-
-          if (!sourceAccountId) {
-            throw createError(
-              "Source account information is missing from the transfer",
-              500,
-            );
-          }
-
           const lockedAccounts =
             await tx.$queryRaw`
-
               SELECT
                 id,
-                "currencyId",
                 balance,
                 "availableBalance",
                 "ledgerBalance"
               FROM "Account"
-              WHERE id = ${sourceAccountId}
+              WHERE id = ${transfer.accountId}
                 AND "userId" = ${transfer.senderId}
               FOR UPDATE
-
             `;
 
           const account =
@@ -2107,7 +2131,7 @@ export const rejectBankTransfer =
 
               data: {
                 status:
-                  "CANCELLED",
+                  "REJECTED",
 
                 complianceReason:
                   transfer.complianceReason ||
@@ -2118,63 +2142,27 @@ export const rejectBankTransfer =
                 transferInclude,
             });
 
-          const transaction =
-            await tx.transaction.create({
-              data: {
-                accountId:
-                  account.id,
-
-                userId:
-                  transfer.senderId,
-
-                type:
-                  "REFUND",
-
-                amount:
-                  transfer.amount,
-
-                fee:
-                  ZERO,
-
-                total:
-                  transfer.total,
-
-                currencyId:
-                  account.currencyId,
-
-                reference:
-                  `REJ-${transfer.reference}`,
-
-                description:
-                  `Reversal for rejected transfer ${transfer.reference}`,
-
-                status:
-                  "COMPLETED",
-
-                metadata: {
-                  transferId:
-                    transfer.id,
-
-                  originalReference:
-                    transfer.reference,
-
-                  rejectionReason,
-                },
-              },
-            });
-
-          await tx.ledgerEntry.create({
+          await tx.transaction.create({
             data: {
               accountId:
                 account.id,
 
-              transactionId:
-                transaction.id,
+              userId:
+                transfer.senderId,
 
               type:
+                "TRANSFER_REVERSAL",
+
+              direction:
                 "CREDIT",
 
               amount:
+                transfer.amount,
+
+              fee:
+                ZERO,
+
+              total:
                 transfer.total,
 
               balanceBefore:
@@ -2183,8 +2171,27 @@ export const rejectBankTransfer =
               balanceAfter:
                 restoredBalance,
 
+              currencyId:
+                transfer.currencyId,
+
+              reference:
+                `REJ-${transfer.reference}`,
+
               description:
                 `Reversal for rejected transfer ${transfer.reference}`,
+
+              status:
+                "COMPLETED",
+
+              metadata: {
+                transferId:
+                  transfer.id,
+
+                originalReference:
+                  transfer.reference,
+
+                rejectionReason,
+              },
             },
           });
 
@@ -2194,9 +2201,9 @@ export const rejectBankTransfer =
                 adminUserId,
 
               action:
-                "TRANSFER",
+                "BANK_TRANSFER_REJECTED",
 
-              entity:
+              entityType:
                 "Transfer",
 
               entityId:
@@ -2234,7 +2241,7 @@ export const rejectBankTransfer =
 
 /*
  * ============================================================
- * ADMIN: BLOCK TRANSFER
+ * ADMIN BLOCK TRANSFER
  * ============================================================
  */
 
@@ -2283,15 +2290,6 @@ export const blockBankTransfer =
       );
     }
 
-    if (
-      transfer.status !==
-      "PENDING"
-    ) {
-      throw createError(
-        `Transfer cannot be blocked from ${transfer.status} status`,
-      );
-    }
-
     const updated =
       await prisma.transfer.update({
         where: {
@@ -2300,9 +2298,6 @@ export const blockBankTransfer =
         },
 
         data: {
-          status:
-            "FAILED",
-
           complianceStatus:
             "BLOCKED",
 
@@ -2323,9 +2318,9 @@ export const blockBankTransfer =
           adminUserId,
 
         action:
-          "TRANSFER",
+          "BANK_TRANSFER_BLOCKED",
 
-        entity:
+        entityType:
           "Transfer",
 
         entityId:
