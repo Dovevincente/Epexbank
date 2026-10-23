@@ -1,152 +1,150 @@
-﻿import { startSavingsMaturityScheduler } from "./services/savingsMaturityScheduler.js";
+﻿
 import http from "http";
 
 import app from "./app.js";
 import env from "./config/env.js";
 import prisma from "./config/database.js";
 import { initializeSocket } from "./sockets/socket.js";
+import { startSavingsMaturityScheduler } from "./services/savingsMaturityScheduler.js";
 
-/* =========================================================
-   HTTP SERVER
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| HTTP SERVER
+|--------------------------------------------------------------------------
+*/
 
 const httpServer = http.createServer(app);
 
-/* =========================================================
-   START SERVER
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| PORT CONFIGURATION
+|--------------------------------------------------------------------------
+| Render provides process.env.PORT for web services.
+| Keep env.port as the local-development fallback.
+*/
+
+const port = Number(process.env.PORT || env.port || 5000);
+const host = "0.0.0.0";
+
+/*
+|--------------------------------------------------------------------------
+| START SERVER
+|--------------------------------------------------------------------------
+*/
 
 const startServer = async () => {
   try {
     await prisma.$connect();
 
-    console.log(
-      "PostgreSQL connected successfully",
-    );
+    console.log("PostgreSQL connected successfully");
 
     initializeSocket(httpServer);
 
-    httpServer.listen(
-      env.port,
-      () => {
-        console.log("");
-        console.log("========================================");
-        console.log("           EPEX BANK API");
-        console.log("========================================");
-        console.log(
-          `Environment: ${env.nodeEnv}`,
+    httpServer.listen(port, host, () => {
+      console.log("");
+      console.log("========================================");
+      console.log("           EPEX BANK API");
+      console.log("========================================");
+      console.log(`Environment: ${env.nodeEnv}`);
+      console.log(`Port:        ${port}`);
+      console.log(`Host:        ${host}`);
+      console.log("API:         /api");
+      console.log("Health:      /health");
+      console.log("Realtime:    Socket.IO enabled");
+      console.log("========================================");
+      console.log("");
+
+      try {
+        startSavingsMaturityScheduler();
+        console.log("[Savings Maturity] Scheduler initialized.");
+      } catch (schedulerError) {
+        console.error(
+          "[Savings Maturity] Failed to initialize scheduler:",
+          schedulerError,
         );
-        console.log(
-          `Port:        ${env.port}`,
-        );
-        console.log(
-          `API:         http://localhost:${env.port}/api`,
-        );
-        console.log(
-          `Health:      http://localhost:${env.port}/health`,
-        );
-        console.log(
-          "Realtime:    Socket.IO enabled",
-        );
-        console.log("========================================");
-        console.log("");
-      },
-    );
+      }
+    });
   } catch (error) {
-    console.error(
-      "Failed to start Epex Bank API",
-    );
+    console.error("Failed to start Epex Bank API", error);
 
-    console.error(error);
-
-    await prisma.$disconnect();
+    await prisma.$disconnect().catch(() => {});
 
     process.exit(1);
   }
 };
 
-/* =========================================================
-   GRACEFUL SHUTDOWN
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| GRACEFUL SHUTDOWN
+|--------------------------------------------------------------------------
+*/
+
+let isShuttingDown = false;
 
 const gracefulShutdown = async (signal) => {
-  console.log(
-    `\n${signal} received. Shutting down gracefully...`,
-  );
+  if (isShuttingDown) return;
 
-  httpServer.close(async () => {
+  isShuttingDown = true;
+
+  console.log(`\n${signal} received. Shutting down gracefully...`);
+
+  const forceExit = setTimeout(() => {
+    console.error("Graceful shutdown timed out.");
+    process.exit(1);
+  }, 10000);
+
+  forceExit.unref();
+
+  httpServer.close(async (serverError) => {
     try {
+      if (serverError) {
+        console.error("HTTP server shutdown error:", serverError);
+      }
+
       await prisma.$disconnect();
 
-      console.log(
-        "PostgreSQL connection closed.",
-      );
+      console.log("PostgreSQL connection closed.");
+      console.log("Epex Bank API stopped.");
 
-      console.log(
-        "Epex Bank API stopped.",
-      );
-
-      process.exit(0);
+      clearTimeout(forceExit);
+      process.exit(serverError ? 1 : 0);
     } catch (error) {
-      console.error(
-        "Error during shutdown:",
-        error,
-      );
+      console.error("Error during shutdown:", error);
 
+      clearTimeout(forceExit);
       process.exit(1);
     }
   });
 };
 
-/* =========================================================
-   PROCESS SIGNALS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| PROCESS SIGNALS
+|--------------------------------------------------------------------------
+*/
 
-process.on(
-  "SIGINT",
-  () => gracefulShutdown("SIGINT"),
-);
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-process.on(
-  "SIGTERM",
-  () => gracefulShutdown("SIGTERM"),
-);
+/*
+|--------------------------------------------------------------------------
+| UNHANDLED ERRORS
+|--------------------------------------------------------------------------
+*/
 
-/* =========================================================
-   UNHANDLED ERRORS
-========================================================= */
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
 
-process.on(
-  "unhandledRejection",
-  (reason) => {
-    console.error(
-      "Unhandled promise rejection:",
-      reason,
-    );
-  },
-);
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+  gracefulShutdown("UNCAUGHT_EXCEPTION");
+});
 
-process.on(
-  "uncaughtException",
-  (error) => {
-    console.error(
-      "Uncaught exception:",
-      error,
-    );
-
-    gracefulShutdown(
-      "UNCAUGHT_EXCEPTION",
-    );
-  },
-);
-
-/* =========================================================
-   BOOT
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| BOOT
+|--------------------------------------------------------------------------
+*/
 
 startServer();
-
-
-/* Automatic Fixed Savings maturity processing */
-startSavingsMaturityScheduler();
-
