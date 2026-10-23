@@ -1,4 +1,5 @@
-import api from "./api.js";
+
+import api, { refreshAccessToken } from "./api.js";
 
 /*
  * =========================================================
@@ -7,10 +8,7 @@ import api from "./api.js";
  */
 
 export const register = async (data) => {
-  const response = await api.post(
-    "/auth/register",
-    data,
-  );
+  const response = await api.post("/auth/register", data);
 
   return response.data;
 };
@@ -21,17 +19,11 @@ export const register = async (data) => {
  * =========================================================
  */
 
-export const login = async (
-  email,
-  password,
-) => {
-  const response = await api.post(
-    "/auth/login",
-    {
-      email,
-      password,
-    },
-  );
+export const login = async (email, password) => {
+  const response = await api.post("/auth/login", {
+    email,
+    password,
+  });
 
   return response.data;
 };
@@ -41,19 +33,12 @@ export const login = async (
  * REFRESH SESSION
  * =========================================================
  *
- * The refresh token is stored in the HTTP-only
- * epex_refresh cookie.
- *
- * JavaScript does not read or store the token.
- * Axios sends the cookie automatically because
- * withCredentials is enabled in api.js.
+ * Uses the shared refresh promise from api.js.
+ * The refresh token stays in the HTTP-only cookie.
  */
 
 export const refreshSession = async () => {
-  const response = await api.post(
-    "/auth/refresh",
-    {},
-  );
+  const response = await refreshAccessToken();
 
   return response.data;
 };
@@ -65,9 +50,7 @@ export const refreshSession = async () => {
  */
 
 export const logout = async () => {
-  const response = await api.post(
-    "/auth/logout",
-  );
+  const response = await api.post("/auth/logout");
 
   return response.data;
 };
@@ -76,30 +59,12 @@ export const logout = async () => {
  * =========================================================
  * CURRENT USER
  * =========================================================
- *
- * During the initial application authentication check,
- * AuthContext passes:
- *
- * {
- *   skipAuthRefresh: true
- * }
- *
- * This prevents the Axios interceptor from attempting
- * its own refresh when /users/me returns 401.
- *
- * AuthContext handles that initial refresh explicitly.
  */
 
-export const getCurrentUser = async (
-  options = {},
-) => {
-  const response = await api.get(
-    "/users/me",
-    {
-      skipAuthRefresh:
-        options.skipAuthRefresh === true,
-    },
-  );
+export const getCurrentUser = async (options = {}) => {
+  const response = await api.get("/users/me", {
+    skipAuthRefresh: options.skipAuthRefresh === true,
+  });
 
   return response.data;
 };

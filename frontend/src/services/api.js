@@ -1,21 +1,8 @@
+
 import axios from "axios";
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:5000/api";
-
-/*
- * =========================================================
- * API CLIENT
- * =========================================================
- *
- * Authentication uses HTTP-only cookies:
- *
- * epex_access
- * epex_refresh
- *
- * Every authenticated request therefore needs credentials.
- */
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -31,31 +18,15 @@ const api = axios.create({
  * =========================================================
  * REQUEST INTERCEPTOR
  * =========================================================
- *
- * FormData requests must NOT use the global
- * application/json content type.
- *
- * The browser/Axios must generate:
- *
- * multipart/form-data; boundary=...
- *
- * automatically.
  */
 
 api.interceptors.request.use(
   (config) => {
+    // Let the browser set the correct multipart boundary.
     if (
       typeof FormData !== "undefined" &&
-      config?.data instanceof FormData
+      config.data instanceof FormData
     ) {
-      /*
-       * Remove any manually configured JSON
-       * Content-Type header.
-       *
-       * The browser will generate the correct
-       * multipart/form-data boundary.
-       */
-
       if (config.headers) {
         delete config.headers["Content-Type"];
         delete config.headers["content-type"];
@@ -69,70 +40,31 @@ api.interceptors.request.use(
 
 /*
  * =========================================================
- * REFRESH STATE
+ * SHARED REFRESH REQUEST
  * =========================================================
  *
- * Only one refresh request is allowed at a time.
+ * All refresh attempts in this module share one promise.
+ * This prevents concurrent refresh requests from rotating
+ * the same refresh cookie independently.
+ *
+ * Refresh tokens remain in HTTP-only cookies.
  */
 
 let refreshPromise = null;
 
-/*
- * =========================================================
- * AUTH ENDPOINTS
- * =========================================================
- *
- * These endpoints must never trigger automatic refresh.
- */
-
-const AUTH_ENDPOINTS = [
-  "/auth/login",
-  "/auth/register",
-  "/auth/refresh",
-  "/auth/logout",
-  "/auth/forgot-password",
-  "/auth/reset-password",
-  "/auth/verify-email",
-];
-
-/*
- * =========================================================
- * AUTH ENDPOINT CHECK
- * =========================================================
- */
-
-const isAuthEndpoint = (url = "") => {
-  const normalizedUrl = String(url).toLowerCase();
-
-  return AUTH_ENDPOINTS.some((endpoint) =>
-    normalizedUrl.includes(endpoint),
-  );
-};
-
-/*
- * =========================================================
- * REFRESH ACCESS TOKEN
- * =========================================================
- *
- * The refresh token is stored in an HTTP-only cookie.
- * JavaScript never needs to read the refresh token.
- */
-
-const refreshAccessToken = async () => {
+export const refreshAccessToken = async () => {
   if (!refreshPromise) {
     refreshPromise = axios
       .post(
-        `${API_BASE_URL}/auth/refresh`,
+        `${API_BASE_URL.replace(/\/+$/, "")}/auth/refresh`,
         {},
         {
           withCredentials: true,
-
+          timeout: 15000,
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-
-          timeout: 15000,
         },
       )
       .finally(() => {
@@ -145,8 +77,42 @@ const refreshAccessToken = async () => {
 
 /*
  * =========================================================
+ * AUTH ENDPOINT DETECTION
+ * =========================================================
+ */
+
+const AUTH_ENDPOINTS = [
+  "/auth/login",
+  "/auth/register",
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+  "/auth/verify-email",
+];
+
+const isAuthEndpoint = (url = "") => {
+  const normalizedUrl = String(url).toLowerCase().split("?")[0];
+
+  return AUTH_ENDPOINTS.some((endpoint) =>
+    normalizedUrl.endsWith(endpoint),
+  );
+};
+
+/*
+ * =========================================================
  * RESPONSE INTERCEPTOR
  * =========================================================
+ *
+ * If a protected request receives 401:
+ *
+ * 1. Do not refresh login/register/refresh/logout requests.
+ * 2. Do not refresh requests explicitly marked to skip it.
+ * 3. Retry the original request at most once.
+ * 4. Share the refresh promise with other failed requests.
+ *
+ * A failed refresh is returned to the caller. This module
+ * does not automatically redirect or clear application state.
  */
 
 api.interceptors.response.use(
@@ -156,82 +122,36 @@ api.interceptors.response.use(
     const originalRequest = error?.config;
     const status = error?.response?.status;
 
-    /*
-     * Network/server error.
-     */
+    // Network failures and timeouts are not authentication errors.
     if (!error?.response) {
       return Promise.reject(error);
     }
 
-    /*
-     * Only 401 responses can trigger
-     * authentication refresh.
-     */
-    if (status !== 401) {
+    if (status !== 401 || !originalRequest) {
       return Promise.reject(error);
     }
 
-    /*
-     * AuthContext may explicitly disable
-     * automatic refresh.
-     */
-    if (
-      originalRequest?.skipAuthRefresh === true
-    ) {
+    if (originalRequest.skipAuthRefresh === true) {
       return Promise.reject(error);
     }
 
-    /*
-     * Never refresh authentication endpoints.
-     *
-     * This prevents:
-     *
-     * /auth/refresh
-     *      ↓
-     * 401
-     *      ↓
-     * /auth/refresh
-     *      ↓
-     * 401
-     *      ↓
-     * infinite loop
-     */
-    if (
-      isAuthEndpoint(
-        originalRequest?.url,
-      )
-    ) {
+    if (isAuthEndpoint(originalRequest.url)) {
       return Promise.reject(error);
     }
 
-    /*
-     * Never retry the same request more than once.
-     */
-    if (originalRequest?._retry) {
+    // Prevent an infinite retry loop.
+    if (originalRequest._retry === true) {
       return Promise.reject(error);
     }
 
     originalRequest._retry = true;
 
     try {
-      /*
-       * Refresh the authentication session.
-       */
       await refreshAccessToken();
 
-      /*
-       * Retry the original protected request.
-       *
-       * The browser automatically sends the
-       * refreshed HTTP-only cookie.
-       */
+      // Retry the original request with the newly set cookie.
       return api(originalRequest);
     } catch (refreshError) {
-      /*
-       * Refresh failed.
-       *
-       * Do not retry again.
-       */
       return Promise.reject(refreshError);
     }
   },
