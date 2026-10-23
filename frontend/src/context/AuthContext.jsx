@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useCallback,
@@ -19,15 +20,15 @@ import {
 const AuthContext = createContext(null);
 
 /*
-|--------------------------------------------------------------------------
-| Inactivity timeout configuration
-|--------------------------------------------------------------------------
-|
-| Users are automatically logged out after two minutes without activity.
-|
-*/
+ * =========================================================
+ * CONFIGURATION
+ * =========================================================
+ *
+ * Client-side inactivity timeout.
+ * The backend should also enforce its own session policies.
+ */
 
-const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
 const ACTIVITY_EVENTS = [
   "mousemove",
@@ -39,38 +40,73 @@ const ACTIVITY_EVENTS = [
   "pointerdown",
 ];
 
+/*
+ * =========================================================
+ * RESPONSE HELPERS
+ * =========================================================
+ */
+
+const extractUser = (response) => {
+  return response?.data?.user ?? null;
+};
+
+const getErrorMessage = (error, fallback) => {
+  return (
+    error?.response?.data?.message ||
+    error?.message ||
+    fallback
+  );
+};
+
+/*
+ * =========================================================
+ * AUTH PROVIDER
+ * =========================================================
+ */
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const initializationPromiseRef = useRef(null);
-
   const idleTimerRef = useRef(null);
   const lastActivityRef = useRef(Date.now());
   const idleLogoutStartedRef = useRef(false);
+  const mountedRef = useRef(false);
 
   /*
-  |--------------------------------------------------------------------------
-  | LOAD CURRENT USER
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * LOAD CURRENT USER
+   * =======================================================
+   */
 
   const loadUser = useCallback(async (options = {}) => {
     const response = await getCurrentUser(options);
+    const currentUser = extractUser(response);
 
-    const currentUser = response?.data?.user ?? null;
+    if (!currentUser?.id) {
+      throw new Error(
+        "The server did not return a valid authenticated user.",
+      );
+    }
 
-    setUser(currentUser);
+    if (mountedRef.current) {
+      setUser(currentUser);
+      setError(null);
+    }
 
     return response;
   }, []);
 
   /*
-  |--------------------------------------------------------------------------
-  | INITIALIZE AUTHENTICATION
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * INITIALIZE AUTHENTICATION
+   * =======================================================
+   *
+   * First check the existing access session.
+   * If it fails, try refreshing the session once.
+   */
 
   const initializeAuth = useCallback(async () => {
     if (initializationPromiseRef.current) {
@@ -78,41 +114,46 @@ export const AuthProvider = ({ children }) => {
     }
 
     const initialization = (async () => {
-      setLoading(true);
-      setError(null);
+      if (mountedRef.current) {
+        setLoading(true);
+        setError(null);
+      }
 
       try {
-        /*
-         * First try the existing access cookie.
-         */
-
         try {
           return await loadUser({
             skipAuthRefresh: true,
           });
-        } catch {
+        } catch (initialError) {
           /*
-           * Access token unavailable or expired.
-           * Try the refresh session.
+           * Attempt a refresh if the current-user request fails.
+           * If refresh also fails, preserve a useful diagnostic.
            */
-        }
+          try {
+            await refreshSession();
 
-        /*
-         * Refresh the session and load the user.
-         */
+            return await loadUser({
+              skipAuthRefresh: true,
+            });
+          } catch (refreshError) {
+            if (mountedRef.current) {
+              setUser(null);
 
-        try {
-          await refreshSession();
+              setError(
+                getErrorMessage(
+                  refreshError,
+                  "Your session could not be restored. Please sign in again.",
+                ),
+              );
+            }
 
-          return await loadUser({
-            skipAuthRefresh: true,
-          });
-        } catch {
-          setUser(null);
-          return null;
+            return null;
+          }
         }
       } finally {
-        setLoading(false);
+        if (mountedRef.current) {
+          setLoading(false);
+        }
       }
     })();
 
@@ -130,30 +171,44 @@ export const AuthProvider = ({ children }) => {
   }, [loadUser]);
 
   /*
-  |--------------------------------------------------------------------------
-  | INITIAL AUTH CHECK
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * INITIAL AUTH CHECK
+   * =======================================================
+   */
 
   useEffect(() => {
-    initializeAuth().catch(() => {
-      setUser(null);
-      setError(null);
-      setLoading(false);
+    mountedRef.current = true;
+
+    initializeAuth().catch((initializationError) => {
+      if (mountedRef.current) {
+        setUser(null);
+        setError(
+          getErrorMessage(
+            initializationError,
+            "Unable to initialize authentication.",
+          ),
+        );
+        setLoading(false);
+      }
     });
+
+    return () => {
+      mountedRef.current = false;
+
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
   }, [initializeAuth]);
 
   /*
-  |--------------------------------------------------------------------------
-  | LOGOUT
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * LOGOUT
+   * =======================================================
+   */
 
   const logout = useCallback(async () => {
-    /*
-     * Prevent a pending inactivity timer from firing again.
-     */
-
     idleLogoutStartedRef.current = true;
 
     if (idleTimerRef.current) {
@@ -163,35 +218,34 @@ export const AuthProvider = ({ children }) => {
 
     try {
       await logoutRequest();
-    } catch {
+    } catch (logoutError) {
       /*
-       * Clear local authentication even if the server
-       * cannot be reached.
+       * The local session is cleared even if the API is
+       * temporarily unreachable. The server session may
+       * remain active until expiry or revocation.
        */
+      console.error(
+        "EpexBank logout request failed:",
+        logoutError?.response?.status ||
+          logoutError?.message ||
+          "Unknown error",
+      );
     } finally {
-      setUser(null);
-      setError(null);
-      setLoading(false);
+      if (mountedRef.current) {
+        setUser(null);
+        setError(null);
+        setLoading(false);
+      }
     }
   }, []);
 
   /*
-  |--------------------------------------------------------------------------
-  | AUTOMATIC LOGOUT AFTER INACTIVITY
-  |--------------------------------------------------------------------------
-  |
-  | The timer starts when an authenticated user is available.
-  | Activity resets the timer.
-  | After two minutes of inactivity, the user is logged out.
-  |
-  */
+   * =======================================================
+   * INACTIVITY LOGOUT
+   * =======================================================
+   */
 
   useEffect(() => {
-    /*
-     * Do not run the timer while authentication is loading
-     * or when there is no authenticated user.
-     */
-
     if (loading || !user?.id) {
       if (idleTimerRef.current) {
         clearTimeout(idleTimerRef.current);
@@ -213,48 +267,16 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    const handleIdleTimeout = async () => {
-      if (disposed || idleLogoutStartedRef.current) {
-        return;
-      }
-
-      const elapsed = Date.now() - lastActivityRef.current;
-
-      /*
-       * Recheck the elapsed time in case the browser
-       * fired the timer earlier than expected.
-       */
-
-      if (elapsed < IDLE_TIMEOUT_MS) {
-        scheduleIdleTimer();
-        return;
-      }
-
-      idleLogoutStartedRef.current = true;
-
-      clearIdleTimer();
-
-      try {
-        await logout();
-      } finally {
-        /*
-         * Redirect even if the logout API request fails.
-         */
-
-        if (!disposed) {
-          window.location.replace("/login");
-        }
-      }
-    };
-
-    function scheduleIdleTimer() {
+    const scheduleIdleTimer = () => {
       clearIdleTimer();
 
       if (disposed || idleLogoutStartedRef.current) {
         return;
       }
 
-      const elapsed = Date.now() - lastActivityRef.current;
+      const elapsed =
+        Date.now() - lastActivityRef.current;
+
       const remaining = Math.max(
         IDLE_TIMEOUT_MS - elapsed,
         0,
@@ -264,7 +286,32 @@ export const AuthProvider = ({ children }) => {
         handleIdleTimeout,
         remaining,
       );
-    }
+    };
+
+    const handleIdleTimeout = async () => {
+      if (disposed || idleLogoutStartedRef.current) {
+        return;
+      }
+
+      const elapsed =
+        Date.now() - lastActivityRef.current;
+
+      if (elapsed < IDLE_TIMEOUT_MS) {
+        scheduleIdleTimer();
+        return;
+      }
+
+      idleLogoutStartedRef.current = true;
+      clearIdleTimer();
+
+      try {
+        await logout();
+      } finally {
+        if (!disposed) {
+          window.location.replace("/login");
+        }
+      }
+    };
 
     const handleActivity = () => {
       if (disposed || idleLogoutStartedRef.current) {
@@ -272,13 +319,23 @@ export const AuthProvider = ({ children }) => {
       }
 
       lastActivityRef.current = Date.now();
-
       scheduleIdleTimer();
     };
 
-    /*
-     * Listen for user interaction throughout the application.
-     */
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      const elapsed =
+        Date.now() - lastActivityRef.current;
+
+      if (elapsed >= IDLE_TIMEOUT_MS) {
+        handleIdleTimeout();
+      } else {
+        scheduleIdleTimer();
+      }
+    };
 
     ACTIVITY_EVENTS.forEach((eventName) => {
       window.addEventListener(
@@ -288,35 +345,15 @@ export const AuthProvider = ({ children }) => {
       );
     });
 
-    /*
-     * If the user returns to the tab, check whether
-     * the inactivity period has already elapsed.
-     */
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        const elapsed = Date.now() - lastActivityRef.current;
-
-        if (elapsed >= IDLE_TIMEOUT_MS) {
-          handleIdleTimeout();
-        }
-      }
-    };
-
     document.addEventListener(
       "visibilitychange",
       handleVisibilityChange,
     );
 
-    /*
-     * Start the initial two-minute countdown.
-     */
-
     scheduleIdleTimer();
 
     return () => {
       disposed = true;
-
       clearIdleTimer();
 
       ACTIVITY_EVENTS.forEach((eventName) => {
@@ -334,15 +371,16 @@ export const AuthProvider = ({ children }) => {
   }, [user?.id, loading, logout]);
 
   /*
-  |--------------------------------------------------------------------------
-  | LOGIN
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * LOGIN
+   * =======================================================
+   */
 
   const login = useCallback(
     async (email, password) => {
       setLoading(true);
       setError(null);
+      idleLogoutStartedRef.current = false;
 
       try {
         const response = await loginRequest(
@@ -351,37 +389,45 @@ export const AuthProvider = ({ children }) => {
         );
 
         const authenticatedUser =
-          response?.data?.user ?? null;
+          extractUser(response);
 
-        if (!authenticatedUser) {
+        if (!authenticatedUser?.id) {
           throw new Error(
-            "Login succeeded, but the authenticated user was not returned.",
+            "Login succeeded, but the server did not return a valid user.",
           );
         }
 
         setUser(authenticatedUser);
 
         /*
-         * Retrieve the authoritative user record.
+         * Refresh the user profile from the backend.
+         * If this request fails, keep the user returned by
+         * the successful login response for now.
          */
-
         try {
           await loadUser();
-        } catch {
+        } catch (profileError) {
+          console.error(
+            "Unable to reload user after login:",
+            profileError?.response?.status ||
+              profileError?.message ||
+              "Unknown error",
+          );
+
           setUser(authenticatedUser);
         }
 
         return response;
-      } catch (error) {
-        const message =
-          error?.response?.data?.message ||
-          error?.message ||
-          "Unable to sign in. Please verify your details and try again.";
+      } catch (loginError) {
+        const message = getErrorMessage(
+          loginError,
+          "Unable to sign in. Please verify your details and try again.",
+        );
 
         setUser(null);
         setError(message);
 
-        throw error;
+        throw loginError;
       } finally {
         setLoading(false);
       }
@@ -390,25 +436,26 @@ export const AuthProvider = ({ children }) => {
   );
 
   /*
-  |--------------------------------------------------------------------------
-  | REGISTER
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * REGISTER
+   * =======================================================
+   */
 
   const register = useCallback(
     async (data) => {
       setLoading(true);
       setError(null);
+      idleLogoutStartedRef.current = false;
 
       try {
         const response = await registerRequest(data);
 
         const registeredUser =
-          response?.data?.user ?? null;
+          extractUser(response);
 
-        if (!registeredUser) {
+        if (!registeredUser?.id) {
           throw new Error(
-            "Registration succeeded, but the authenticated user was not returned.",
+            "Registration succeeded, but the server did not return a valid user.",
           );
         }
 
@@ -416,21 +463,28 @@ export const AuthProvider = ({ children }) => {
 
         try {
           await loadUser();
-        } catch {
+        } catch (profileError) {
+          console.error(
+            "Unable to reload user after registration:",
+            profileError?.response?.status ||
+              profileError?.message ||
+              "Unknown error",
+          );
+
           setUser(registeredUser);
         }
 
         return response;
-      } catch (error) {
-        const message =
-          error?.response?.data?.message ||
-          error?.message ||
-          "Unable to create your account. Please try again.";
+      } catch (registrationError) {
+        const message = getErrorMessage(
+          registrationError,
+          "Unable to create your account. Please try again.",
+        );
 
         setUser(null);
         setError(message);
 
-        throw error;
+        throw registrationError;
       } finally {
         setLoading(false);
       }
@@ -439,20 +493,20 @@ export const AuthProvider = ({ children }) => {
   );
 
   /*
-  |--------------------------------------------------------------------------
-  | CLEAR ERROR
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * CLEAR ERROR
+   * =======================================================
+   */
 
   const clearError = useCallback(() => {
     setError(null);
   }, []);
 
   /*
-  |--------------------------------------------------------------------------
-  | AUTHENTICATION STATE
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * AUTHENTICATION STATE
+   * =======================================================
+   */
 
   const isAuthenticated = Boolean(user?.id);
 
@@ -460,10 +514,10 @@ export const AuthProvider = ({ children }) => {
     String(user?.role ?? "").toUpperCase() === "ADMIN";
 
   /*
-  |--------------------------------------------------------------------------
-  | CONTEXT VALUE
-  |--------------------------------------------------------------------------
-  */
+   * =======================================================
+   * CONTEXT VALUE
+   * =======================================================
+   */
 
   const value = useMemo(
     () => ({
@@ -500,10 +554,10 @@ export const AuthProvider = ({ children }) => {
 };
 
 /*
-|--------------------------------------------------------------------------
-| AUTHENTICATION HOOK
-|--------------------------------------------------------------------------
-*/
+ * =========================================================
+ * AUTHENTICATION HOOK
+ * =========================================================
+ */
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
